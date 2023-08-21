@@ -23,6 +23,7 @@ def ParserOptions():
     parser.add_argument("--rec", dest="rec", help="PDB file for receptor protein", required=True)
     parser.add_argument("--degree", dest="degree", type=float,help="Amount, in degrees, to enumerate torsions by (default 15.0)", default=15.0) 
     parser.add_argument("--cutoff", dest="cutoff_dist", type=float,help="Cutoff for eliminating any conformer close to protein within cutoff by (default 1.0 A)", default=1.5) 
+    parser.add_argument("--rms", dest="rms", type=float,help="Only keep structures with RMS > CUTOFF (default 1.0 A)", default=1.0) 
     parser.add_argument("--output", dest="output", help="Output sdf file for conformations", default='output.sdf')
     args = parser.parse_args()
     return args
@@ -32,13 +33,7 @@ FILE_PARSERS = {
     "mol": MolFromMolFile,
     "mol2": MolFromMol2File,
     "pdb": MolFromPDBFile,
-    "png": MolFromPNGFile,
-    "tpl": MolFromTPLFile,
-    "smarts": MolFromSmarts,
-    "smiles": MolFromSmiles,
-    "svg": MolFromRDKitSVG,
-    "mae": MaeMolSupplier,
-    "sdf": SDMolSupplier
+    "sdf": MolFromMolFile,
 }
 
 def MolFromInput(mol_input): #Reading any file format
@@ -103,7 +98,7 @@ def replace_coor(input_sdf, input_mol2, output): #Replacing coodinates from sdf 
     
     mol2.WriteFile(mol_mol2, output)
 
-def get_atom_names(mol, match): #Getting  Tripos atom name for dihedral match.
+def get_atom_names(mol, match): #Getting  Tripos atom name for dihedral match. Depricated.
     atom_names = []
     for idx in match:
         atom_data = mol.GetAtomWithIdx(idx).GetPropsAsDict()
@@ -137,7 +132,7 @@ def MCS_AtomMap(query, ref): #Building atom map for the MCS.
         Amap.append((queryMatch[i], refMatch[i]))
     return Amap
     
-def uniqueDihedrals(refmol, mol): #Getting uniq dihedral matches not found in MCS using tripos atom names
+def uniqueDihedrals(refmol, mol): #Getting uniq dihedral matches not found in MCS using tripos atom names Depricated.
 
     DM_refmol = getDihedralMatches(refmol)
     ref_dict = {}
@@ -261,16 +256,17 @@ def run_gbsa():
         raise SystemExit('\nERROR!\nFailed to run the MMPBSA.py. See the {} for details.'.format(os.path.abspath("MMPBSA.log\n")))
     return    
 
-def CheckSymmetry(sdfmol, ref): #Filtering symmetrical identical conformations
-	RMSD = []
+def CheckRMS(sdfmol, ref, rms=1.0): #Filtering identical conformations
 	if os.path.exists(sdfmol):
 		outf = Chem.SDMolSupplier(sdfmol)
 		for i, mol in enumerate(outf):
-			RMSD.append(GetBestRMS(outf[i], ref))
-		aa = 0.0 in RMSD
+			if GetBestRMS(outf[i], ref) < rms:
+				return True
+			else:
+				continue
+		return False
 	else:
-		aa = False
-	return aa
+		return False
 	
 if __name__ == '__main__':
 
@@ -280,9 +276,9 @@ if __name__ == '__main__':
 		raise SystemExit('\nWarning!\nThe output file exists. Check the file {}'.format(args.output))
 	
 	refmol = MolFromInput(args.ref)
-	mol = MolFromInput(args.mol)
+	input_file = MolFromInput(args.mol)
 	
-	molDihedrals = get_uniqueDihedrals(refmol, mol)
+	molDihedrals = get_uniqueDihedrals(refmol, input_file)
 	
 
 	if(len(molDihedrals) > 3):
@@ -297,7 +293,7 @@ if __name__ == '__main__':
 			intD += 1
 		AlignMol(mol, refmol, atomMap=MCS_AtomMap(mol, refmol))
 		min_dist = distance(args.rec, mol)
-		if min_dist > args.cutoff_dist and False == CheckSymmetry(args.output, mol):
+		if  False == CheckRMS(args.output, mol, args.rms) and min_dist > args.cutoff_dist:
 			outf = open(args.output,'a')
 			sdwriter = Chem.SDWriter(outf)
 			sdwriter.write(mol)
@@ -305,7 +301,10 @@ if __name__ == '__main__':
 			outf.close()
 		else:
 			continue
-    
+	
+	print('\n{} conformers have been generated.\n'.format(len(Chem.SDMolSupplier(args.output))))
+	
+	exit()
 	run_acpype(args.output)
 
 	with open('GBSA_results.txt', 'w') as result_output:
@@ -333,4 +332,3 @@ if __name__ == '__main__':
 						parts = line.split()
 						energy = parts[2]
 						result_output.write(f"molecule_{i+1} {energy}" + "\n")
-
