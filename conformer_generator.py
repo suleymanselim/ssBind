@@ -8,6 +8,24 @@ from rdkit.Chem import rdFMCS
 from rdkit.Chem import rdMolTransforms
 from typing import Optional
 from rdkit.Chem.rdmolfiles import * 
+import multiprocessing as mp
+from joblib import Parallel, delayed
+
+
+
+#	usage: conformer_generator.py [-h] --ref REF --mol MOL --rec REC
+#	                              [--degree DEGREE] [--cutoff CUTOFF_DIST]
+#	                              [--rms RMS] [--output OUTPUT]
+#
+#	options:
+#	  -h, --help            show this help message and exit
+#	  --ref REF             Referance molecule
+#	  --mol MOL             Ligand molecule
+#	  --rec REC             PDB file for receptor protein
+#	  --degree DEGREE       Amount, in degrees, to enumerate torsions by (default 15.0)
+#	  --cutoff CUTOFF_DIST  Cutoff for eliminating any conformer close to protein within cutoff by (default 1.5 A)
+#	  --rms RMS             Only keep structures with RMS > CUTOFF (default 1.0 A)
+#	  --output OUTPUT       Output sdf file for conformations
 
 
 RC = os.system('export AMBERHOME=~/miniconda/amber.sh')
@@ -25,6 +43,7 @@ def ParserOptions():
     parser.add_argument("--cutoff", dest="cutoff_dist", type=float,help="Cutoff for eliminating any conformer close to protein within cutoff by (default 1.0 A)", default=1.5) 
     parser.add_argument("--rms", dest="rms", type=float,help="Only keep structures with RMS > CUTOFF (default 1.0 A)", default=1.0) 
     parser.add_argument("--output", dest="output", help="Output sdf file for conformations", default='output.sdf')
+    parser.add_argument("--cpu", dest="cpu", type=int, help="Number of CPU. If not set, it uses all available CPUs.") 
     args = parser.parse_args()
     return args
 
@@ -256,6 +275,18 @@ def run_gbsa():
         raise SystemExit('\nERROR!\nFailed to run the MMPBSA.py. See the {} for details.'.format(os.path.abspath("MMPBSA.log\n")))
     return    
 
+def cpptraj_LIGmol2(output_mol2):
+    with open('cpptraj.in', 'w') as f: 
+        f.writelines('parm complex.prmtop\n')
+        f.writelines('trajin min.rst\n')
+        f.writelines('strip !(:LIG)\n')
+        f.writelines('trajout {} sybyltype\n'.format(output_mol2))
+    
+    RC = os.system('''cpptraj -i cpptraj.in  > cpptraj.log 2>&1 ''')
+    if RC != 0:
+        raise SystemExit('\nERROR!\nFailed to run the cpptraj. See the {} for details.'.format(os.path.abspath("cpptraj.log\n")))
+    return  
+    
 def CheckRMS(sdfmol, ref, rms=1.0): #Filtering identical conformations
 	if os.path.exists(sdfmol):
 		outf = Chem.SDMolSupplier(sdfmol)
@@ -267,6 +298,22 @@ def CheckRMS(sdfmol, ref, rms=1.0): #Filtering identical conformations
 		return False
 	else:
 		return False
+
+def gen_confs(j, mol_Dihedrals, ligand, reflig, receptor, cutoff_dist, output, rms):
+	intD = 0
+	mol = MolFromInput(ligand)
+	for i in mol_Dihedrals:
+		rdMolTransforms.SetDihedralRad(mol.GetConformer(),*i,value=j[intD])
+		intD += 1
+	AlignMol(mol, refmol, atomMap=MCS_AtomMap(mol, refmol))
+	min_dist = distance(receptor, mol)
+	if  min_dist > cutoff_dist and False == CheckRMS(output, mol, rms):
+		outf = open(output,'a')
+		sdwriter = Chem.SDWriter(outf)
+		sdwriter.write(mol)
+		sdwriter.close()
+		outf.close()
+
 	
 if __name__ == '__main__':
 
@@ -279,43 +326,35 @@ if __name__ == '__main__':
 	input_file = MolFromInput(args.mol)
 	
 	molDihedrals = get_uniqueDihedrals(refmol, input_file)
-	
+	inputs = itertools.product(degreeRange(args.degree),repeat=len(molDihedrals))
 
 	if(len(molDihedrals) > 3):
 		print("\nWarning! Too many torsions ({})".format(len(molDihedrals)))
 	print('\nConformational sampling is running for {} dihedrals.'.format(len(molDihedrals)))  
-	          
-	for j in itertools.product(degreeRange(args.degree),repeat=len(molDihedrals)):
-		intD = 0
-		mol = MolFromInput(args.mol)
-		for i in molDihedrals:
-			rdMolTransforms.SetDihedralRad(mol.GetConformer(),*i,value=j[intD])
-			intD += 1
-		AlignMol(mol, refmol, atomMap=MCS_AtomMap(mol, refmol))
-		min_dist = distance(args.rec, mol)
-		if  False == CheckRMS(args.output, mol, args.rms) and min_dist > args.cutoff_dist:
-			outf = open(args.output,'a')
-			sdwriter = Chem.SDWriter(outf)
-			sdwriter.write(mol)
-			sdwriter.close()
-			outf.close()
-		else:
-			continue
+
+	if args.cpu is not None:
+		nprocs = args.cpu
+	else:
+		nprocs = mp.cpu_count()
+	print(f"\nNumber of CPU cores in use for conformer generation: {nprocs}")
+    
+    
+	pool = mp.Pool(processes=nprocs)
+	pool.starmap(gen_confs, [(j, molDihedrals, args.mol, refmol, args.rec, args.cutoff_dist, args.output, args.rms) for j in inputs])
+	
 	
 	print('\n{} conformers have been generated.\n'.format(len(Chem.SDMolSupplier(args.output))))
 	
-	exit()
 	run_acpype(args.output)
 
 	with open('GBSA_results.txt', 'w') as result_output:
 				
 		confs = Chem.SDMolSupplier(args.output)
-		os.makedirs('minimized_complexes')
 		
 		for i, mol in enumerate(confs):
 			
 			# Write conformation to its own SDF file
-			outfile = f'molecule_{i+1}.sdf'
+			outfile = f'molecule_{i}.sdf'
 			w = Chem.SDWriter(outfile)
 			w.write(confs[i])
 			w.close()
@@ -323,12 +362,19 @@ if __name__ == '__main__':
 			replace_coor(outfile, "LIG.acpype/LIG_bcc_gaff2.mol2", 'lig.bcc.mol2')
 			run_tleap(receptor=args.rec)
 			run_minimization()
-			run_gbsa()
-			os.system(f'ambpdb -p complex.prmtop -c min.rst > minimized_complexes/molecule_{i+1}.pdb')
-			
-			with open("FINAL_RESULTS_MMPBSA.dat", 'r') as f:
-				for line in f:
-					if line.startswith('DELTA TOTAL'):
-						parts = line.split()
-						energy = parts[2]
-						result_output.write(f"molecule_{i+1} {energy}" + "\n")
+			cpptraj_LIGmol2('ligandLIG.mol2')
+			LIGmol2 = MolFromInput('ligandLIG.mol2')
+			if  False == CheckRMS('minimized.sdf', LIGmol2, args.rms):
+				outf = open('minimized.sdf','a')
+				sdwriter = Chem.SDWriter(outf)
+				sdwriter.write(LIGmol2)
+				sdwriter.close()
+				outf.close()			
+				run_gbsa()
+				with open("FINAL_RESULTS_MMPBSA.dat", 'r') as f:
+					for line in f:
+						if line.startswith('DELTA TOTAL'):
+							parts = line.split()
+							energy = parts[2]
+							result_output.write(f"molecule_{i} {energy}" + "\n")
+			os.remove("molecule_{i}.sdf")
