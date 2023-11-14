@@ -1,0 +1,65 @@
+;====================================================
+; Energy minimization
+;====================================================
+
+
+
+; RUN CONTROL PARAMETERS
+integrator               = steep
+tinit                    = 0
+dt                       = 0.001
+nsteps                   = -1
+init-step                = 0
+simulation-part          = 1
+comm-mode                = Linear
+nstcomm                  = 100
+comm-grps                = 
+freezegrps		 = Protein
+energygrps 		 = Protein LIG
+
+; ENERGY MINIMIZATION OPTIONS
+emtol                    = 10.0
+emstep                   = 0.001
+niter                    = 20
+fcstep                   = 0
+nstcgsteep               = 1000
+nbfgscorr                = 10
+
+
+; OUTPUT CONTROL OPTIONS
+nstlog                   = 1000
+nstcalcenergy            = 100
+nstenergy                = 1000
+nstxout-compressed       = 0
+compressed-x-precision   = 1000
+compressed-x-grps        = 
+
+
+; NEIGHBORSEARCHING PARAMETERS
+cutoff-scheme            = Verlet
+nstlist                  = 10
+ns_type                  = grid
+pbc                      = xyz
+periodic-molecules       = no
+verlet-buffer-tolerance  = 0.005
+rlist                    = 1
+
+; OPTIONS FOR ELECTROSTATICS AND VDW
+coulombtype              = PME
+rcoulomb-switch          = 0
+rcoulomb                 = 1
+fourierspacing           = 0.125
+vdwtype                  = Cut-off
+rvdw-switch              = 0			
+rvdw                     = 1			
+DispCorr                 = EnerPres		
+
+
+; EWALD/PME/PPPM parameters
+pme-order                = 4
+ewald-rtol               = 1e-05
+ewald-geometry           = 3d
+epsilon-surface          = 0
+implicit-solvent         = no
+ewald-rtol-lj            = 0.001
+lj-pme-comb-rule         = Geometric
