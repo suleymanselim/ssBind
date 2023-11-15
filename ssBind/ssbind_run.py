@@ -103,6 +103,7 @@ def main():
 		pool.starmap(filtering, [(mol, args.receptor, args.cutoff_dist, args.rms) for i, mol in enumerate(Chem.SDMolSupplier('conformers.sdf'))])
 
 
+
 if __name__ == '__main__':
 	
 	from chem_tools import MolFromInput, obabel_convert
@@ -112,7 +113,7 @@ if __name__ == '__main__':
 	#main()	
 	
 	if args.minimize:
-		from gmx_tools import system_setup, combine_gro_files, gmx_mdrun
+		from gmx_tools import system_setup, combine_gro_files, gmx_mdrun, replace_GROcoor
 		
 		### Optimize the molecule before FF generation
 		sdf = MolFromInput('filtered.sdf')
@@ -123,14 +124,10 @@ if __name__ == '__main__':
 		writer.close()
 		
 		
-		if args.FF == 'cgenff':
-			obabel_convert("ligand.sdf", 'ligand.mol2')
-			system_setup(args.receptor, 'ligand.mol2',  FF=args.FF)
-		else:
-			system_setup(args.receptor, 'ligand.sdf',  FF=args.FF)
+		system_setup(args.receptor, 'ligand.sdf',  FF=args.FF)
 		
-		poses = Chem.SDMolSupplier('filtered.sdf')
-		for i, mol in enumerate(poses):
+
+		for i, mol in enumerate(sdf):
 			writer = Chem.SDWriter("ligand.sdf")
 			mol = Chem.AddHs(mol, addCoords=True)
 			writer.write(mol)
@@ -138,24 +135,21 @@ if __name__ == '__main__':
 			
 			obabel_convert("ligand.sdf", f'{i}.gro')
 			
-			with open("md_setup/LIG.gro") as file1, open(f'{i}.gro') as file2:
-				for line1, line2 in zip(file1, file2):
-					
-					
-					
 			md_dir = str(uuid.uuid4())
+			
 			shutil.copytree('md_setup', md_dir)
 			
-			combine_gro_files('md_setup/protein.gro', 'LIG.gro', md_dir + '/complex.gro')
+			replace_GROcoor(f'{i}.gro', 'LIG.gro', md_dir + '/LIG.gro')
+			
+			combine_gro_files(md_dir + '/protein.gro', md_dir + '/LIG.gro', md_dir + '/complex.gro')
+			
 			os.chdir(md_dir)
 			os.system("echo 'q'|gmx make_ndx -f complex.gro")
-			shutil.copy('/home/suleymanselim/PROJECTS/saltbind/saltfind/utils/em.mdp', 'em.mdp')
+			shutil.copy('/home/suleymanselim/PROJECTS/ssBind/ssBind/utils/em.mdp', 'em.mdp')
 			gmx_mdrun() 
+			os.chdir(curdir)
 			if i == 3:
 				exit()
-
-
-
 
 
 

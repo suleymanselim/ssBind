@@ -14,7 +14,8 @@ simulation-part          = 1
 comm-mode                = Linear
 nstcomm                  = 100
 comm-grps                = 
-freezegrps		 = Protein
+;freezegrps		 = Protein
+;freezedim 		 = YYY
 energygrps 		 = Protein LIG
 
 ; ENERGY MINIMIZATION OPTIONS

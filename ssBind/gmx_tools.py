@@ -225,7 +225,7 @@ LIG 1
 
     
 	
-def combine_gro_files(file1_path, file2_path, output_path, box='1 1 1'):
+def combine_gro_files(file1_path, file2_path, output_path, box='10 10 10'):
 	with open(file1_path) as file1:
 		file1_lines = file1.readlines()
 	with open(file2_path) as file2:
@@ -253,17 +253,29 @@ def combine_gro_files(file1_path, file2_path, output_path, box='1 1 1'):
 	with open(output_path, "w") as output_file:
 		output_file.write(header)
 		output_file.writelines(atoms)
-		output_file.write('1 1 1')
+		output_file.write(box)
 
-def gro_coordinates(line):
-    fields = []
-    fields.append(line[21:28].strip()) # x coord
-    fields.append(line[29:36].strip()) # y coord
-    fields.append(line[37:44].strip()) # z coord
-    if (all([f != '' for f in fields])): # check for empty fields
-        return all([_isint(fields[0]), _isfloat(fields[1]), _isfloat(fields[2]))])
-    else:
-        return 0
+def replace_GROcoor(gro_file1, gro_file2, output_path):
+	with open(gro_file1) as file1:
+		file1_lines = file1.readlines()
+	with open(gro_file2) as file2:
+		file2_lines = file2.readlines()
+
+	num_atoms = int(file1_lines[1])
+
+	# Create the header for the combined file
+	title = "LIG Gro File"
+	header = f"{title}\n{num_atoms}\n"
+	box = file2_lines[-1]
+
+	with open(output_path, "w") as output_file:
+		output_file.write(header)
+		for i in range(2, num_atoms + 2):
+				line1 = file1_lines[i]
+				line2 = file2_lines[i]
+				new_line = "{:5d}{:<5s}{:>5s}{:5d}{:8.3f}{:8.3f}{:8.3f}\n".format(1, 'LIG', str(line2[10:15]).strip(), i-1, float(str(line1[20:27]).strip()), float(str(line1[28:35]).strip()), float(str(line1[36:43]).strip()))
+				output_file.write(new_line)
+		output_file.write(box)
 
 
 def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF='amber99sb-ildn', water='tip3p', ignh=False):
@@ -283,7 +295,7 @@ def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF=
 
 def gmx_mdrun():
 	"""gmx grompp (the gromacs preprocessor) reads a molecular topology file, checks the validity of the file, expands the topology from a molecular description to an atomic description."""
-	cmd = '{} grompp -f em.mdp -o em.tpr -c complex.gro -n index.ndx -p topol.top > gromacs.log 2>&1'.format(GMX)
+	cmd = '{} grompp -f em.mdp -o em.tpr -c complex.gro -n index.ndx -p topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
