@@ -83,7 +83,7 @@ def replace_coor(input_sdf, input_mol2, output):
     mol2.WriteFile(mol_mol2, output)
 
     
-def obabel_convert(input_file, output_file, resname=None, ph=None, QniqueNames=True): 
+def obabel_convert(input_file, output_file, resname=None, ph=None, QniqueNames=False): 
     #Replacing coodinates from sdf to mol2 file.
     from openbabel import openbabel
     

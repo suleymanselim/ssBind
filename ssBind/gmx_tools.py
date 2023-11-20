@@ -1,6 +1,6 @@
 import os, shutil, sys, re
 from pathlib import Path
-
+import pandas as pd
 
 def find_gmx():
 	RC = os.system('gmx -h >/dev/null 2>&1')
@@ -14,6 +14,7 @@ def find_gmx():
 
 GMX = find_gmx()
 
+MDPFILES = sys.path[0] + '/utils'
 
 def get_gaff(ligandfile, molname):
 	"""Build a ligand topology and coordinate file from a ligand file using acpype for gaff"""
@@ -31,7 +32,7 @@ def get_gaff(ligandfile, molname):
 
 def get_cgenff(molecule, molname):
 	"""Build a ligand topology and coordinate file from a ligand file using SILCSBIO for cgenff"""
-	from chem_tools import obabel_convert, makeQniqueNames
+	from chem_tools import obabel_convert
 
 	input_format = molecule.split('.')[-1].lower()
 
@@ -47,7 +48,7 @@ def get_cgenff(molecule, molname):
 		shutil.move("posre.itp", f"posre_{molname}.itp")
 		shutil.move(f"{Path(molecule).stem}_gmx.top", f"{molname}.top")
 
-		obabel_convert('{}_gmx.pdb'.format(Path(molecule).stem), 'LIG.gro')
+		obabel_convert('{}_gmx.pdb'.format(Path(molecule).stem), 'LIG.gro', QniqueNames=False)
 
 
 def get_openff(molecule, molname):	####https://github.com/openforcefield/openff-toolkit
@@ -169,7 +170,7 @@ def get_topol(pro_itp, lig_itp,  ff='gaff', protein_FF='amber99sb-ildn'):
 	    os.makedirs('md_setup')
 	    print("Directory 'md_setup' created successfully.")
 	except FileExistsError:
-	    print("Directory 'md_setup' can not be created.")
+	    print("\nWarning: Directory 'md_setup' already exists !\n")
 
 
 	if ff == 'gaff' or ff == 'openff':
@@ -223,7 +224,13 @@ LIG 1
 	protein_itp(pro_itp, 'protein', "md_setup/protein.itp")
 	shutil.move('protein.gro', "md_setup/protein.gro")
 
-    
+	try:
+	    if ff == 'gaff':
+	    	shutil.copy('LIG.acpype/LIG_GMX.gro', "md_setup/LIG.gro")
+	    else:
+	    	shutil.copy('LIG.gro', "md_setup/LIG.gro")
+	except FileExistsError:
+	    print("Directory 'md_setup' can not be created. The directory already exists")    
 	
 def combine_gro_files(file1_path, file2_path, output_path, box='10 10 10'):
 	with open(file1_path) as file1:
@@ -293,19 +300,43 @@ def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF=
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 
-def gmx_mdrun():
+def gmx_trjcat(idx, time, outtrj):
+	"""Build a protein topology and coordinate file from a PDB file"""
+
+	cmd = 'echo Protein System|{0} trjconv -s {1}.tpr -f {1}.trr -o {1}.xtc -pbc mol -ur compact > gromacs.log 2>&1'.format(GMX, idx)
+	RC = os.system(cmd)
+	if RC != 0:
+		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
+
+	cmd = 'echo {3}|{0} trjcat -f {1}.xtc -o {2}.xtc -settime 1 > gromacs.log 2>&1'.format(GMX, idx, outtrj, time)
+	RC = os.system(cmd)
+	if RC != 0:
+		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
+		
+def gmx_mdrun(idx, md_setup):
 	"""gmx grompp (the gromacs preprocessor) reads a molecular topology file, checks the validity of the file, expands the topology from a molecular description to an atomic description."""
-	cmd = '{} grompp -f em.mdp -o em.tpr -c complex.gro -n index.ndx -p topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX)
+	cmd = '{0} grompp -f {1} -o {2}.tpr -c {2}.gro -p {3}/topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX, MDPFILES + '/em.mdp', idx, md_setup)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 
 	"""Performs Energy Minimization"""
-	cmd = '{} mdrun -deffnm em -nt 1 > gromacs.log 2>&1'.format(GMX)
+	cmd = '{} mdrun -deffnm {} -nt 1 > gromacs.log 2>&1'.format(GMX, idx)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
-		
+
+def mda_edr(edrfile, term):
+	import warnings
+	warnings.simplefilter("ignore")
+	import MDAnalysis as mda
+	from MDAnalysisTests.datafiles import AUX_EDR
+	aux = mda.auxiliary.EDR.EDRReader(edrfile)
+	
+	#Using only last 100 steps and converting to kacl/mol
+	dat = pd.DataFrame.from_dict(aux.get_data(term)).tail(100).mean()*0.2390057361
+	return float(dat[term])
+			
 def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
 	if FF == 'openff':
 		gmx_pdb2gmx(receptor, outcoord='protein.gro', outtop='protein.top', protein_FF=proteinFF, ignh=False)

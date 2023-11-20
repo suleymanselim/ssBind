@@ -19,15 +19,15 @@ def ParserOptions():
     parser.add_argument("--ligand", dest="ligand", help="Ligand molecule", required=True)
     parser.add_argument("--receptor", dest="receptor", help="PDB file for receptor protein", required=True)
     parser.add_argument("--FF", dest="FF", default='gaff', help="Generalized Force Fields GAFF, CGenFF, OpenFF", choices=['gaff', 'openff', 'cgenff'])    
+    parser.add_argument("--FFprotein", dest="FFprotein", default='amber99sb-ildn')    
     parser.add_argument("--degree", dest="degree", type=float,help="Amount, in degrees, to enumerate torsions by (default 15.0)", default=60.0) 
     parser.add_argument("--cutoff", dest="cutoff_dist", type=float,help="Cutoff for eliminating any conformer close to protein within cutoff by (default 1.5 A)", default=1.5) 
     parser.add_argument("--rms", dest="rms", type=float,help="Only keep structures with RMS > CUTOFF (default 0.2 A)", default=0.2) 
-    parser.add_argument("--output", dest="output", help="Output sdf file for conformations", default='output.sdf')
     parser.add_argument("--cpu", dest="cpu", type=int, help="Number of CPU. If not set, it uses all available CPUs.") 
-    parser.add_argument("--generator", dest="generator", help="Conformer generator: rdkit or angle enumeration.", choices=['angle', 'rdkit', 'docking']) 
+    parser.add_argument("--generator", dest="generator", help="Choose a method for the conformer generation.", choices=['angle', 'rdkit', 'plants', 'rdock']) 
     parser.add_argument("--numconf", dest="numconf", type=int, help="Number of confermers", default=1000)    
     parser.add_argument("--minimize", dest="minimize", help="Perform minimization", action='store_true')
-    parser.add_argument("--flex", dest="flex", help="Residues having side-chain flexibility taken into account")
+    #parser.add_argument("--flex", dest="flex", help="Residues having side-chain flexibility taken into account")
     args = parser.parse_args()
     return args
     
@@ -63,7 +63,7 @@ def main():
 		
 		print('\nConformational sampling is running for {} dihedrals.'.format(len(molDihedrals)))
 	
-	elif args.generator == 'docking':
+	elif args.generator == 'plants':
 		import plants
 		#Conformer generation using PLANTS docking tool.
 		print(f"\nNumber of CPU cores in use for conformer generation using PLANTS: {nprocs}")
@@ -85,6 +85,21 @@ def main():
 		mol2_files = glob.glob(os.path.join('docking_conformers', "*.mol2"))
 		print('\n{} conformers have been generated using PLANTS docking tool.'.format(len(mol2_files)))
 		pool.starmap(plants.filtering, [(MolFromInput(mol), args.rms) for mol in mol2_files])
+	elif args.generator == 'rdock':
+		import rdock
+		
+		rdock_random = str(uuid.uuid4())
+		
+		molecule = args.reference
+		
+		input_format = molecule.split('.')[-1].lower()
+
+		if input_format not in {'sd','sdf'}:
+			obabel_convert(molecule, 'ref_{}.sdf'.format(rdock_random), QniqueNames=False)
+		
+		rdock.get_tethered(refmol, input_file, '{}.sdf'.format(rdock_random))
+		rdock.prepare_receptor(RECEPTOR_FILE = 'receptor.mol2', REF_MOL = 'ref_{}.sdf'.format(rdock_random))
+		rdock.run_rdock('{}.sdf'.format(rdock_random), '.{}.sdf'.format(rdock_random))
 	else:
 		from chem_tools import gen_conf_rdkit
 		#Conformer generation using RDKit.
@@ -94,7 +109,7 @@ def main():
 		else:
 			pool.starmap(gen_conf_rdkit, [(input_file, refmol, j) for j in range(len(list(inputs)))])
 
-
+	exit()
 	
 	if args.generator != 'docking':
 		###Filter conformers having stearic clashes, clash with the protein, duplicates.
@@ -107,15 +122,14 @@ def main():
 if __name__ == '__main__':
 	
 	from chem_tools import MolFromInput, obabel_convert
-	curdir = os.getcwd()
 	args = ParserOptions()
 	
-	#main()	
+	main()	
 	
 	if args.minimize:
-		from gmx_tools import system_setup, combine_gro_files, gmx_mdrun, replace_GROcoor
+		from gmx_tools import *
 		
-		### Optimize the molecule before FF generation
+		### Simply optimize the molecule before FF generation
 		sdf = MolFromInput('filtered.sdf')
 		writer = Chem.SDWriter("ligand.sdf")
 		mol = Chem.AddHs(sdf, addCoords=True)
@@ -123,33 +137,63 @@ if __name__ == '__main__':
 		writer.write(mol)
 		writer.close()
 		
+		## Getting md setup files
+		system_setup(args.receptor, 'ligand.sdf',  proteinFF=args.proteinFF, FF=args.FF)
 		
-		system_setup(args.receptor, 'ligand.sdf',  FF=args.FF)
+		# Check if the file exists
+		if os.path.isfile('LIE.csv'):
+			# If the file exists, read the existing data into the DataFrame
+			df = pd.read_csv('LIE.csv')
+		else:
+			# If the file doesn't exist, create a new DataFrame
+			df = pd.DataFrame(columns=['Index', 'LIE'])
 		
-
-		for i, mol in enumerate(sdf):
-			writer = Chem.SDWriter("ligand.sdf")
+		## Making directory for trajectory files
+		trjdir = str(uuid.uuid4())
+		os.makedirs('.{}'.format(trjdir))
+	    
+		for i, mol in enumerate(Chem.SDMolSupplier('filtered.sdf')):
+			
+			md = str(uuid.uuid4())
+			
+			writer = Chem.SDWriter(f"{md}.sdf")
 			mol = Chem.AddHs(mol, addCoords=True)
 			writer.write(mol)
 			writer.close()
 			
-			obabel_convert("ligand.sdf", f'{i}.gro')
+			obabel_convert(f"{md}.sdf", f'{md}.gro')
 			
-			md_dir = str(uuid.uuid4())
+			replace_GROcoor(f'{md}.gro', 'md_setup/LIG.gro', f'{md}.gro')
 			
-			shutil.copytree('md_setup', md_dir)
+			combine_gro_files('md_setup/protein.gro', f'{md}.gro', f'{md}.gro')
+
+#			if os.path.exists('index.ndx'):
+#				os.system("echo 'q'|gmx make_ndx -f complex.gro > gromacs.log 2>&1")
 			
-			replace_GROcoor(f'{i}.gro', 'LIG.gro', md_dir + '/LIG.gro')
+			gmx_mdrun(md, 'md_setup') 
+
+			gmx_trjcat(md, i, f'.{trjdir}/{md}.xtc')
+    		
+			energy = '{:0.3f}'.format(mda_edr(f'{md}.edr', 'LJ-SR:Protein-LIG') + mda_edr(f'{md}.edr', 'Coul-SR:Protein-LIG'))
 			
-			combine_gro_files(md_dir + '/protein.gro', md_dir + '/LIG.gro', md_dir + '/complex.gro')
+			new_data = pd.DataFrame({'Index': [f'{i}'], 'LIE': [f"{energy}"]})
+			df = df.append(new_data, ignore_index=True)
 			
-			os.chdir(md_dir)
-			os.system("echo 'q'|gmx make_ndx -f complex.gro")
-			shutil.copy('/home/suleymanselim/PROJECTS/ssBind/ssBind/utils/em.mdp', 'em.mdp')
-			gmx_mdrun() 
-			os.chdir(curdir)
-			if i == 3:
-				exit()
+			## Deleting temperory trajectory files
+			for f in glob.glob(f"*{md}*"):
+				os.remove(f)
+			if i == 2:
+				break
+		
+		df.to_csv('LIE.csv')
+		
+		cmd = '{0} trjcat -f {1} -o trjout.xtc  > gromacs.log 2>&1'.format(find_gmx(), f".{trjdir}/*")
+		RC = os.system(cmd)
+		if RC != 0:
+			raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
+
+		## Deleting temperory trajectory files
+		shutil.rmtree(f".{trjdir}")
 
 
 
