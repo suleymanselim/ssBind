@@ -27,9 +27,8 @@ def ParserOptions():
     parser.add_argument("--generator", dest="generator", help="Choose a method for the conformer generation.", choices=['angle', 'rdkit', 'plants', 'rdock']) 
     parser.add_argument("--numconf", dest="numconf", type=int, help="Number of confermers", default=1000)    
     parser.add_argument("--minimize", dest="minimize", help="Perform minimization", action='store_true')
-    parser.add_argument("--flex", dest="flex")
     parser.add_argument("--iteration", dest="iteration", type=int, help="Number of iteration for docking", default=3) 
-    #parser.add_argument("--flex", dest="flex", help="Residues having side-chain flexibility taken into account")
+    parser.add_argument("--flex", dest="flex", help="Residues having side-chain flexibility taken into account")
     args = parser.parse_args()
     return args
     
