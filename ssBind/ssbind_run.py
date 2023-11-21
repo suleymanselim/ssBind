@@ -22,11 +22,13 @@ def ParserOptions():
     parser.add_argument("--FFprotein", dest="FFprotein", default='amber99sb-ildn')    
     parser.add_argument("--degree", dest="degree", type=float,help="Amount, in degrees, to enumerate torsions by (default 15.0)", default=60.0) 
     parser.add_argument("--cutoff", dest="cutoff_dist", type=float,help="Cutoff for eliminating any conformer close to protein within cutoff by (default 1.5 A)", default=1.5) 
-    parser.add_argument("--rms", dest="rms", type=float,help="Only keep structures with RMS > CUTOFF (default 0.2 A)", default=0.2) 
+    parser.add_argument("--rms", dest="rms", type=float,help="Only keep structures with RMS > CUTOFF (default 0.2 A)", default=0.1) 
     parser.add_argument("--cpu", dest="cpu", type=int, help="Number of CPU. If not set, it uses all available CPUs.") 
     parser.add_argument("--generator", dest="generator", help="Choose a method for the conformer generation.", choices=['angle', 'rdkit', 'plants', 'rdock']) 
     parser.add_argument("--numconf", dest="numconf", type=int, help="Number of confermers", default=1000)    
     parser.add_argument("--minimize", dest="minimize", help="Perform minimization", action='store_true')
+    parser.add_argument("--flex", dest="flex")
+    parser.add_argument("--iteration", dest="iteration", type=int, help="Number of iteration for docking", default=3) 
     #parser.add_argument("--flex", dest="flex", help="Residues having side-chain flexibility taken into account")
     args = parser.parse_args()
     return args
@@ -59,7 +61,7 @@ def main():
 		print(f"\nNumber of CPU cores in use for conformer generation: {nprocs}")
 		if(len(molDihedrals) > 3):
 			print("\nWarning! Too many torsions ({})".format(len(molDihedrals)))
-		pool.starmap(gen_conf_angle, [(j, molDihedrals, input_file, refmol, args.receptor, args.cutoff_dist, args.output, args.rms) for j in inputs])
+		pool.starmap(gen_conf_angle, [(j, molDihedrals, input_file, refmol) for j in inputs])
 		
 		print('\nConformational sampling is running for {} dihedrals.'.format(len(molDihedrals)))
 	
@@ -80,11 +82,16 @@ def main():
 			flex_res = []
 		
 		plants.SPORES(args.receptor, 'receptor.mol2')
-		pool.starmap(plants.plants_docking, [(i, input_file, refmol, args.receptor, 10, 'output_{}'.format(i), 10, xyz, fixedAtom, flex_res) for i in range(math.ceil(args.numconf/10))])	
-		
-		mol2_files = glob.glob(os.path.join('docking_conformers', "*.mol2"))
-		print('\n{} conformers have been generated using PLANTS docking tool.'.format(len(mol2_files)))
-		pool.starmap(plants.filtering, [(MolFromInput(mol), args.rms) for mol in mol2_files])
+		ite = 0
+		numconf = 0
+		while  ite < args.iteration and  numconf < args.numconf:
+			pool.starmap(plants.plants_docking, [(ite+1, i, input_file, refmol, args.receptor, 10, 'output_{}'.format(i), 10, xyz, fixedAtom, flex_res) for i in range(math.ceil(args.numconf/10))])	
+			
+			mol2_files = glob.glob(os.path.join('docking_conformers', "*.mol2"))
+			print('\n{} conformers have been generated using PLANTS docking tool.'.format(len(mol2_files)))
+			pool.starmap(plants.filtering, [(MolFromInput(mol), args.numconf, args.rms) for mol in mol2_files])
+			numconf = len(Chem.SDMolSupplier('filtered.sdf'))
+			ite += 1
 	elif args.generator == 'rdock':
 		import rdock
 		
@@ -109,8 +116,7 @@ def main():
 		else:
 			pool.starmap(gen_conf_rdkit, [(input_file, refmol, j) for j in range(len(list(inputs)))])
 
-	exit()
-	
+
 	if args.generator != 'docking':
 		###Filter conformers having stearic clashes, clash with the protein, duplicates.
 		from chem_tools import filtering

@@ -207,7 +207,7 @@ def degreeRange(inc):
     return degrees
     #The code was adapted from David Koes https://github.com/dkoes/rdkit-scripts/blob/master/rdallconf.py
 
-def gen_conf_angle(j, mol_Dihedrals, mol, reflig, receptor, cutoff_dist, output, rms):
+def gen_conf_angle(j, mol_Dihedrals, mol, reflig):
     # Generate conformers using angle
     intD = 0
     for i in mol_Dihedrals:

@@ -31,7 +31,7 @@ def get_tethered(refmol, ligand, out): ###https://github.com/Discngine/rdkit_tet
 	
     mcs = rdFMCS.FindMCS([refmol, ligandHs], completeRingsOnly=True)
 
-
+    print(mcs.smartsString)
     refmolcore = Chem.AllChem.ReplaceSidechains(refmol,Chem.MolFromSmarts(mcs.smartsString, mergeHs=True))
 
     core=AllChem.DeleteSubstructs(refmolcore, Chem.MolFromSmiles('*'))
@@ -122,11 +122,11 @@ def run_rdock(ligand, output, nruns=10, TRANS_MODE='TETHERED', ROT_MODE='TETHERE
 # TETHERED SCAFFOLF
 ################################
 SECTION LIGAND
-TRANS_MODE {}
-ROT_MODE {}
-DIHEDRAL_MODE {}
-MAX_TRANS {}
-MAX_ROT {}
+	TRANS_MODE {}
+	ROT_MODE {}
+	DIHEDRAL_MODE {}
+	MAX_TRANS {}
+	MAX_ROT {}
 END_SECTION
 """.format(TRANS_MODE,ROT_MODE, DIHEDRAL_MODE, MAX_TRANS,MAX_ROT)
             

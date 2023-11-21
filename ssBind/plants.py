@@ -6,7 +6,6 @@ from rdkit.Chem import AllChem
 import MDAnalysis as mda
 from MDAnalysis.analysis import distances
 import chilife as xl
-
 from chem_tools import MolFromInput
 
 def get_close_residues(receptor, ligand, cutoff=3.5): 
@@ -136,7 +135,7 @@ def SPORES(inputfile, outputfile):
         raise SystemExit('\nERROR!\nFailed to run the SPORES. See the {} for details.'.format(os.path.abspath("SPORES.log\n")))
         
 
-def plants_docking(i, ligand, reflig, receptor, radius=10, output_dir='output', cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None):
+def plants_docking(iteration, i, ligand, reflig, receptor, radius=10, output_dir='output', cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None, ):
 
     template=(f'''
 #Input Options
@@ -190,7 +189,7 @@ flip_ring_corners 0
         os.makedirs(os.path.join('..', f'docking_conformers'), exist_ok=True)
         for filename in os.listdir('.'):
             if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
-                shutil.move(filename, os.path.join(os.path.join('..', f'docking_conformers'), filename.replace('_entry_00001', f'_entry_{i}')))
+                shutil.move(filename, os.path.join(os.path.join('..', f'docking_conformers'), filename.replace('_entry_00001', f'_{iteration}_{i}')))
 
         try:
             with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', 'docking_conformers', 'docking_scores.csv'), 'a') as csv_out:
@@ -203,7 +202,7 @@ flip_ring_corners 0
                 # Write docking scores
                 for row in reader:
                     ligand_entry = row[0]
-                    ligand_last = ligand_entry.replace('_entry_00001', f'_entry_{i}')
+                    ligand_last = ligand_entry.replace('_entry_00001', f'_{iteration}_{i}')
                     total_score = row[1]
                     writer.writerow([ligand_last, total_score])
             success = True
@@ -213,17 +212,19 @@ flip_ring_corners 0
         os.chdir(curdir)
         shutil.rmtree(output_dir)
 
-def filtering(mol, rms=0.2):
-    if CheckRMS(mol, rms) == False:
+def filtering(mol, numconf, rms=0.1):
+    if os.path.isfile('filtered.sdf') and numconf == len(Chem.SDMolSupplier('filtered.sdf')):
         return
-    else:
+    if CheckRMS(mol, rms):
         outf = open('filtered.sdf','a')
         sdwriter = Chem.SDWriter(outf)
         sdwriter.write(mol)
         sdwriter.close()
         outf.close()
+    else:
+        return
 
-def CheckRMS(moli, rms=1.0):
+def CheckRMS(moli, rms=0.1):
     ##Filtering identical conformations
     try:
         outf = Chem.SDMolSupplier('filtered.sdf')
@@ -236,3 +237,4 @@ def CheckRMS(moli, rms=1.0):
         return True
     except OSError:
         return True  
+      
