@@ -97,7 +97,7 @@ def main():
 		if input_format not in {'sd','sdf'}:
 			obabel_convert(molecule, 'ref_{}.sdf'.format(rdock_random), QniqueNames=False)
 		
-		rdock.get_tethered(refmol, input_file, '{}.sdf'.format(rdock_random))
+		rdock.get_tethered(refmol, input_file, rdock_random)
 		rdock.prepare_receptor(RECEPTOR_FILE = 'receptor.mol2', REF_MOL = 'ref_{}.sdf'.format(rdock_random))
 		rdock.run_rdock('{}.sdf'.format(rdock_random), '.{}.sdf'.format(rdock_random))
 	else:

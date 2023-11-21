@@ -20,7 +20,7 @@ def which(program):
     return None
 
 
-def get_tethered(refmol, ligand, out):
+def get_tethered(refmol, ligand, out): ###https://github.com/Discngine/rdkit_tethered_minimization/blob/master/tetheredMinimization.py
 
     from rdkit import Chem
     from rdkit.Chem import rdFMCS, AllChem 
@@ -44,9 +44,13 @@ def get_tethered(refmol, ligand, out):
     atoms = map(lambda x:x+1, list(tethered_atom_ids))
     atoms_string = ','.join(str(el) for el in atoms)
 
+    w=Chem.SDWriter(f'{out}.sdf')
+    w.write(ligandHs)
+    w.flush()
+    
     ligandHs.SetProp('TETHERED ATOMS',atoms_string)
         
-    w=Chem.SDWriter(out)
+    w=Chem.SDWriter(f'{out}.sd')
     w.write(ligandHs)
     w.flush()
 
@@ -105,7 +109,7 @@ END_SECTION
         raise SystemExit('\nERROR!\nFailed to run the rbcavity. see the %s for details.'%os.path.abspath("rbcavity.log\n"))
 
     
-def run_rdock(ligand, output, nruns=1, TRANS_MODE='TETHERED', ROT_MODE='TETHERED', DIHEDRAL_MODE='FREE', MAX_TRANS=1.0, MAX_ROT=30.0):
+def run_rdock(ligand, output, nruns=10, TRANS_MODE='TETHERED', ROT_MODE='TETHERED', DIHEDRAL_MODE='FREE', MAX_TRANS=1.0, MAX_ROT=30.0):
     """
     rbdock – the rDock docking engine itself.
         
