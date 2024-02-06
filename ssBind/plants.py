@@ -7,6 +7,7 @@ import MDAnalysis as mda
 from MDAnalysis.analysis import distances
 import chilife as xl
 from chem_tools import MolFromInput
+import pandas as pd
 
 def get_close_residues(receptor, ligand, cutoff=3.5): 
 
@@ -90,18 +91,19 @@ def getAtomConst(ligand, reflig):
     pdwriter.write(ligand)
     pdwriter.close()
 
-    SPORES('ligand.pdb', 'ligand.mol2')
+    SPORES('ligand.pdb', 'ligand.mol2', 'complete')
 
     ligcenter = molecule_center(reflig)
 
     ringAtoms = []
     for pair in MCS_AtomMap(reflig, ligand):
-        if any(pair[1] in sublist for sublist in GetRingSystems(ligand, includeSpiro=False)):
+        if any(pair[1] in sublist for sublist in GetRingSystems(ligand)):
             ringAtoms.append(pair[1])
+    
 
     conf = ligand.GetConformer()
     if not ringAtoms:
-        ringAtoms = range(conf.GetNumAtoms())
+        ringAtoms = [t[1] for t in MCS_AtomMap(reflig, ligand)]
 
     dis = []
     for atom in ringAtoms:
@@ -128,14 +130,14 @@ def GetRingSystems(mol, includeSpiro=False): #https://gist.github.com/greglandru
         systems = nSystems
     return systems
 
-def SPORES(inputfile, outputfile):
+def SPORES(inputfile, outputfile, mode):
 
-    RC = os.system(f'''SPORES --mode complete {inputfile} {outputfile} > SPORES.log 2>&1 ''')
+    RC = os.system(f'''SPORES --mode {mode} {inputfile} {outputfile} > SPORES.log 2>&1 ''')
     if RC != 0:
         raise SystemExit('\nERROR!\nFailed to run the SPORES. See the {} for details.'.format(os.path.abspath("SPORES.log\n")))
         
 
-def plants_docking(iteration, i, ligand, reflig, receptor, radius=10, output_dir='output', cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None, ):
+def plants_docking(i, ligand, reflig, receptor, radius=12, output_dir='output', cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None, ):
 
     template=(f'''
 #Input Options
@@ -152,6 +154,11 @@ cluster_structures {cluster_structures}
 scoring_function chemplp
 ligand_intra_score lj
 
+#Search Algorithm
+#flip_ring_corners 1
+#flip_amide_bonds 1
+#force_flipped_bonds_planarity 1
+
 #Output Options
 write_protein_splitted 1
 write_multi_mol2 0
@@ -160,8 +167,6 @@ write_multi_mol2 0
 #Fixed Scaffold
 ligand_file ligand.mol2 fixed_scaffold_{fixedAtom}
 
-
-flip_ring_corners 0	
 
 #Flexible Side-chains
 ''')
@@ -189,10 +194,10 @@ flip_ring_corners 0
         os.makedirs(os.path.join('..', f'docking_conformers'), exist_ok=True)
         for filename in os.listdir('.'):
             if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
-                shutil.move(filename, os.path.join(os.path.join('..', f'docking_conformers'), filename.replace('_entry_00001', f'_{iteration}_{i}')))
+                shutil.move(filename, os.path.join(os.path.join('..', f'docking_conformers'), filename.replace('_entry_00001', f'_{i}')))
 
         try:
-            with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', 'docking_conformers', 'docking_scores.csv'), 'a') as csv_out:
+            with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', 'docking_conformers', 'Scores.csv'), 'a') as csv_out:
                 reader = csv.reader(csv_in)
                 writer = csv.writer(csv_out)
 
@@ -202,7 +207,7 @@ flip_ring_corners 0
                 # Write docking scores
                 for row in reader:
                     ligand_entry = row[0]
-                    ligand_last = ligand_entry.replace('_entry_00001', f'_{iteration}_{i}')
+                    ligand_last = ligand_entry.replace('_entry_00001', f'_{i}')
                     total_score = row[1]
                     writer.writerow([ligand_last, total_score])
             success = True
@@ -213,10 +218,9 @@ flip_ring_corners 0
         shutil.rmtree(output_dir)
 
 def filtering(mol, numconf, rms=0.1):
-    if os.path.isfile('filtered.sdf') and numconf == len(Chem.SDMolSupplier('filtered.sdf')):
-        return
+    ##Filtering identical conformations
     if CheckRMS(mol, rms):
-        outf = open('filtered.sdf','a')
+        outf = open('filtered.sdf', 'a')
         sdwriter = Chem.SDWriter(outf)
         sdwriter.write(mol)
         sdwriter.close()
@@ -225,7 +229,6 @@ def filtering(mol, numconf, rms=0.1):
         return
 
 def CheckRMS(moli, rms=0.1):
-    ##Filtering identical conformations
     try:
         outf = Chem.SDMolSupplier('filtered.sdf')
         for i, mol in enumerate(outf):
@@ -237,4 +240,41 @@ def CheckRMS(moli, rms=0.1):
         return True
     except OSError:
         return True  
-      
+
+def combine_files(dockdir):
+	# Directory containing the Mol2 files
+	mol2_files = sorted([f for f in os.listdir(dockdir) if f.endswith('.mol2')])
+
+	# Create an SDF writer
+	sdf_writer = Chem.SDWriter('conformers.sdf')
+
+	# Process each Mol2 file
+	for mol2_file in mol2_files:
+		mol2_path = os.path.join(dockdir, mol2_file)
+		mol = Chem.MolFromMol2File(mol2_path)
+		if mol is not None:
+		    sdf_writer.write(mol)
+
+	sdf_writer.close()
+
+	csv_path = f'{dockdir}/Scores.csv'
+	df = pd.read_csv(csv_path, header=None)
+
+	df.iloc[:, 0] = df.iloc[:, 0].apply(lambda x: x + '.mol2')
+
+	# Create a dictionary for mapping filenames to their rows
+	filename_to_row = {filename: row for row, filename in enumerate(mol2_files)}
+
+	# Sort the dataframe based on the order of the mol2 files
+	df['sort_index'] = df.iloc[:, 0].map(filename_to_row)
+	df.sort_values(by='sort_index', inplace=True)
+
+	df.drop(columns=['sort_index'], inplace=True)
+	df.reset_index(drop=True, inplace=True)
+
+	# Save the rearranged CSV with index column
+	df.columns = ['names', 'Score']
+	df['names'] = df['names'].str.replace('.mol2', '', regex=False)
+
+	df.to_csv('Scores.csv', index=True, index_label='Index')
+	shutil.rmtree(dockdir)

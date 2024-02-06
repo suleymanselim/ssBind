@@ -1,6 +1,8 @@
-import os, shutil, sys, re
+import os, shutil, sys, re, uuid, glob 
 from pathlib import Path
 import pandas as pd
+from rdkit import Chem
+
 
 def find_gmx():
 	RC = os.system('gmx -h >/dev/null 2>&1')
@@ -232,6 +234,8 @@ LIG 1
 	except FileExistsError:
 	    print("Directory 'md_setup' can not be created. The directory already exists")    
 	
+	combine_gro_files("md_setup/protein.gro", "md_setup/LIG.gro", "md_setup/complex.gro")
+	
 def combine_gro_files(file1_path, file2_path, output_path, box='10 10 10'):
 	with open(file1_path) as file1:
 		file1_lines = file1.readlines()
@@ -303,11 +307,16 @@ def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF=
 def gmx_trjcat(idx, time, outtrj):
 	"""Build a protein topology and coordinate file from a PDB file"""
 
-	cmd = 'echo Protein System|{0} trjconv -s {1}.tpr -f {1}.trr -o {1}.xtc -pbc mol -ur compact > gromacs.log 2>&1'.format(GMX, idx)
+	cmd = 'echo Protein System|{0} trjconv -s md_setup/complex.gro -f {1}.trr -o {1}.xtc -pbc nojump -ur compact -center > gromacs1.log 2>&1'.format(GMX, idx)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 
+	cmd = 'echo Protein System|{0} trjconv -s md_setup/complex.gro -f {1}.xtc -o {1}.xtc -fit rot+trans > gromacs2.log 2>&1'.format(GMX, idx)
+	RC = os.system(cmd)
+	if RC != 0:
+		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
+		
 	cmd = 'echo {3}|{0} trjcat -f {1}.xtc -o {2}.xtc -settime 1 > gromacs.log 2>&1'.format(GMX, idx, outtrj, time)
 	RC = os.system(cmd)
 	if RC != 0:
@@ -326,6 +335,13 @@ def gmx_mdrun(idx, md_setup):
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 
+def gmx_grompp(md_setup):
+	"""gmx grompp (the gromacs preprocessor) reads a molecular topology file, checks the validity of the file, expands the topology from a molecular description to an atomic description."""
+	cmd = '{0} grompp -f {1} -o {2}/complex.tpr -c {2}/complex.gro -p {2}/topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX, MDPFILES + '/em.mdp', md_setup)
+	RC = os.system(cmd)
+	if RC != 0:
+		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
+		
 def mda_edr(edrfile, term):
 	import warnings
 	warnings.simplefilter("ignore")
@@ -333,7 +349,7 @@ def mda_edr(edrfile, term):
 	from MDAnalysisTests.datafiles import AUX_EDR
 	aux = mda.auxiliary.EDR.EDRReader(edrfile)
 	
-	#Using only last 100 steps and converting to kacl/mol
+	#Using only last 100 steps and converting to kcal/mol
 	dat = pd.DataFrame.from_dict(aux.get_data(term)).tail(100).mean()*0.2390057361
 	return float(dat[term])
 			
@@ -346,7 +362,7 @@ def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
 
 	if FF == 'gaff':
 		gmx_pdb2gmx(receptor, outcoord='protein.gro', outtop='protein.top', protein_FF=proteinFF, ignh=False)
-		#get_gaff(ligand, 'LIG')
+		get_gaff(ligand, 'LIG')
 		get_topol('protein.top', 'LIG.acpype/LIG_GMX.itp', ff=FF, protein_FF=proteinFF)
 
 
@@ -358,4 +374,32 @@ def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
 			gmx_pdb2gmx(receptor, outcoord='protein.gro', outtop='protein.top', protein_FF='charmm36', ignh=False)
 			get_topol('protein.top', 'LIG.top', ff=FF)
 
+
+def minimize(i, mol, trjdir):
 	
+	from chem_tools import obabel_convert
+	
+	
+	md = str(uuid.uuid4())
+	writer = Chem.SDWriter(f"{md}.sdf")
+	mol = Chem.AddHs(mol, addCoords=True)
+	writer.write(mol)
+	writer.close()
+			
+	obabel_convert(f"{md}.sdf", f'{md}.gro')
+			
+	replace_GROcoor(f'{md}.gro', 'md_setup/LIG.gro', f'{md}.gro')
+			
+	combine_gro_files('md_setup/protein.gro', f'{md}.gro', f'{md}.gro')
+
+	gmx_mdrun(md, 'md_setup') 
+	gmx_trjcat(md, i, f'.{trjdir}/{md}.xtc')
+    		
+	energy = '{:0.3f}'.format(mda_edr(f'{md}.edr', 'LJ-SR:Protein-LIG') + mda_edr(f'{md}.edr', 'Coul-SR:Protein-LIG'))
+			
+	data = pd.DataFrame({'Index': [f'{i}'], 'Score': [f"{energy}"]})
+	data.to_csv('Scores.csv', mode='a', index=False, header=False)
+			
+	## Deleting temperory trajectory files
+	for f in glob.glob(f"*{md}*"):
+		os.remove(f)

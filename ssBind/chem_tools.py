@@ -11,9 +11,30 @@ from rdkit.Chem.rdmolfiles import *
 from joblib import Parallel, delayed
 from rdkit.Chem import AllChem
 from copy import deepcopy
+import MDAnalysis as mda
+import numpy as np
 
+from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
+import logging
+rpy2_logger.setLevel(logging.ERROR)
 
+def which(program):
+    def is_exe(fpath):
+        return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
 
+    fpath, fname = os.path.split(program)
+    if fpath:
+        if is_exe(program):
+            return program
+    else:
+        for path in os.environ.get("PATH", "").split(os.pathsep):
+            exe_file = os.path.join(path, program)
+            if is_exe(exe_file):
+                return exe_file
+
+    return None
+    
+    
 FILE_PARSERS = {
     "mol": MolFromMolFile,
     "mol2": MolFromMol2File,
@@ -169,7 +190,7 @@ def getDihedralMatches(mol):
 
 def MCS_AtomMap(query, ref): 
     #Building atom map for the MCS.
-    mcs = rdFMCS.FindMCS([query, ref])
+    mcs = rdFMCS.FindMCS([query, ref], completeRingsOnly=True, matchValences=True)
     submol = Chem.MolFromSmarts(mcs.smartsString)
     refMatch = ref.GetSubstructMatch(submol)
     queryMatch = query.GetSubstructMatch(submol)
@@ -183,7 +204,7 @@ def get_uniqueDihedrals(refmol, mol):
 
     DM_mol = getDihedralMatches(mol)
     submol = Chem.MolFromSmarts(
-            rdFMCS.FindMCS([mol, refmol]).smartsString
+            rdFMCS.FindMCS([mol, refmol], completeRingsOnly=True, matchValences=True).smartsString
             )
     queryMatch = mol.GetSubstructMatch(submol)
     uniqueDihedrals = []
@@ -289,7 +310,7 @@ def distance(receptor, ligand, cutoff=1.5):
     else:
         return False
 
-def filtering(mol, receptor, cutoff=1.5, rms=1.0):
+def filtering(mol, receptor, cutoff=1.5, rms=0.2):
     outf = open('filtered.sdf','a')
     if steric_clash(mol):
         return
@@ -303,24 +324,49 @@ def filtering(mol, receptor, cutoff=1.5, rms=1.0):
         sdwriter.close()
         outf.close()
 
-def cluster(sdf, ref, output):
+def clustering_poses(inputfile, ref, csv_scores, output, binsize, distThresh, numbin):
     import MDAnalysis as mda
+    from gmx_tools import gmx_grompp
+    from rdkit.Chem.Descriptors3D import Asphericity
+
     from MDAnalysis.analysis import pca, align
     import matplotlib.pyplot as plt
     import seaborn as sns
     from rpy2 import robjects
     import rpy2.robjects.lib.ggplot2 as ggplot2
 
-    confs = Chem.SDMolSupplier(sdf)
+    input_format = inputfile.split('.')[-1].lower()
 
-    u = mda.Universe(ref, confs)
-    pc = pca.PCA(u, select='all',
+    if input_format != 'sdf':
+        
+        gmx_grompp('md_setup')
+        
+        u = mda.Universe('md_setup/complex.tpr', 'trjout.xtc') 	
+        elements = mda.topology.guessers.guess_types(u.atoms.names)
+        u.add_TopologyAttr('elements', elements)
+        atoms = u.select_atoms('resname LIG')
+        
+        #atoms.write("output-traj.pdb", frames='all', multiframe=True, bonds='conect')
+        
+        sdwriter = Chem.SDWriter('traj-output.sdf')
+        for ts in u.trajectory:
+            sdwriter.write(atoms.convert_to("RDKIT"))
+        
+        sdwriter.close()
+        confs = Chem.SDMolSupplier('traj-output.sdf')
+
+
+    else:
+        confs = Chem.SDMolSupplier(inputfile)
+        u = mda.Universe(confs[0], confs)     
+
+    pc = pca.PCA(u, select='not (name H*)',
                  align=False, mean=None,
                  n_components=None).run()
 
-    backbone = u.select_atoms('all')
+    atoms = u.select_atoms('not (name H*)')
 
-    transformed = pc.transform(backbone, n_components=3)
+    transformed = pc.transform(atoms, n_components=3)
     transformed.shape
 
     df = pd.DataFrame(transformed,
@@ -329,9 +375,9 @@ def cluster(sdf, ref, output):
 
     df['Index'] = df.index * u.trajectory.dt
 
-    liedata = pd.read_csv('LIE.csv', delimiter=',', header=0)
-    PCA_LIE = pd.merge(df, liedata, on='Index')
-    PCA_LIE.to_csv('PCA_LIE.csv', index=False, header=True)
+    scoredata = pd.read_csv(csv_scores, delimiter=',', header=0)
+    PCA_Scores = pd.merge(df, scoredata, on='Index')
+    PCA_Scores.to_csv('PCA_Scores.csv', index=False, header=True)
 
     pcs = ['PC1', 'PC2', 'PC3']
     for i in range(len(pcs)):
@@ -342,10 +388,10 @@ def cluster(sdf, ref, output):
             robjects.r(f'''
             library(ggplot2)
 
-            df <- read.table('PCA_LIE.csv', header=TRUE, sep=",")
+            df <- read.table('PCA_Scores.csv', header=TRUE, sep=",")
 
-            p <- ggplot(df, aes(x={pcs[i]}, y={pcs[j]}, z=LIE)) +
-                stat_summary_2d(fun=mean, binwidth = 0.25) 
+            p <- ggplot(df, aes(x={pcs[i]}, y={pcs[j]}, z=Score)) +
+                stat_summary_2d(fun=mean, binwidth = {binsize}) 
 
             plot_data <- ggplot_build(p)
             bin_data <- plot_data$data[[1]]
@@ -353,10 +399,10 @@ def cluster(sdf, ref, output):
             ''')
 
             data = pd.read_csv(f'{pcs[i]}_{pcs[j]}.csv', delimiter=',', header=0)
-            raw_data = pd.read_csv('PCA_LIE.csv', delimiter=',', header=0)
+            raw_data = pd.read_csv('PCA_Scores.csv', delimiter=',', header=0)
 
             df_sorted = data.sort_values(by='value')
-            top_bins = df_sorted.head(10)
+            top_bins = df_sorted.head(numbin)
             extracted_data = top_bins[['xmin', 'xmax','ymin', 'ymax']]
 
             for a, rowa in extracted_data.iterrows():
@@ -368,10 +414,10 @@ def cluster(sdf, ref, output):
             robjects.r(f'''
             library(ggplot2)
 
-            mydata <- read.table('PCA_LIE.csv', header=TRUE, sep=",")
+            mydata <- read.table('PCA_Scores.csv', header=TRUE, sep=",")
 
             p <- ggplot(mydata, aes(x={pcs[i]}, y={pcs[j]})) +
-                stat_bin_2d(binwidth = 0.25, aes(fill = after_stat(density)))
+                stat_bin_2d(binwidth ={binsize}, aes(fill = after_stat(density)))
 
             plot_data <- ggplot_build(p)
             bin_data <- plot_data$data[[1]]
@@ -379,45 +425,58 @@ def cluster(sdf, ref, output):
             ''')
 
             data = pd.read_csv(f'{pcs[i]}_{pcs[j]}.csv', delimiter=',', header=0)
-            raw_data = pd.read_csv('PCA_LIE.csv', delimiter=',', header=0)
+            raw_data = pd.read_csv('PCA_Scores.csv', delimiter=',', header=0)
 
             df_sorted = data.sort_values(by='density')
-            top_bins = df_sorted.tail(10)
+            top_bins = df_sorted.tail(numbin)
             extracted_data = top_bins[['xmin', 'xmax','ymin', 'ymax']]
 
             for a, rowa in extracted_data.iterrows():
                 for b, rowb in raw_data.iterrows():
                     if rowa['xmin'] < rowb[pcs[i]] < rowa['xmax'] and rowa['ymin'] < rowb[pcs[j]] < rowa['ymax']:
-                        index_data.append(rowb)
+                        if any(row['Index'] == rowb['Index'] for row in index_data):
+                           index_data.append(rowb)
             os.remove(f'{pcs[i]}_{pcs[j]}.csv')
 
 
 
     cids = []
-    for entry in index_data:
+    index_dict = []
+    
+
+    for i, entry in enumerate(index_data):
         cids.append(confs[int(entry['Index'])])
+        index_dict.append({i: int(entry['Index'])})
 
     from rdkit.Chem import rdMolAlign
     dists = []
     for i in range(len(cids)):
         for j in range(i):
-            dists.append(rdMolAlign.GetBestRMS(cids[i],cids[j]))
+            rms = rdMolAlign.GetBestRMS(cids[i],cids[j])
+            dists.append(rms)
 
     from rdkit.ML.Cluster import Butina
-    clusts = Butina.ClusterData(dists, len(cids), 0.75, isDistData=True, reordering=True)
+    clusts = Butina.ClusterData(dists, len(cids), distThresh, isDistData=True, reordering=True)
+    
+    #from sklearn.cluster import DBSCAN
+    #from scipy.spatial.distance import squareform
+    #dbscan = DBSCAN(metric='precomputed', eps=0.75, min_samples=5, algorithm = 'auto', n_jobs = 8 )
+    #clustering = dbscan.fit(squareform(dists))
+
+    
     PC1 = []
     PC2 = []
     PC3 = []
-    outf = open('clusts.sdf','a')
+    
+    sdwriter = Chem.SDWriter('clusts.sdf')
     for i in clusts:
         a = index_data[i[0]]
         PC1.append(a['PC1'])
         PC2.append(a['PC2'])
         PC3.append(a['PC3'])
-        sdwriter = Chem.SDWriter(outf)
-        sdwriter.write(cids[i[0]])
-        sdwriter.close()
-    outf.close()
+        dict_i = index_dict[i[0]]
+        sdwriter.write(confs[int(next(iter(dict_i.values())))])
+    sdwriter.close()
 
 
     pcx = [PC1, PC2, PC3]
@@ -429,13 +488,13 @@ def cluster(sdf, ref, output):
             library(ggplot2)
             library(ggdensity)
 
-            df <- read.table('PCA_LIE.csv', header=TRUE, sep=",")
+            df <- read.table('PCA_Scores.csv', header=TRUE, sep=",")
             
-            p <- ggplot(df, aes(x={pcs[i]}, y={pcs[j]}, z=LIE)) +
-                stat_summary_2d(fun=mean, binwidth = 0.25) +
-                scale_fill_gradientn(colours = rainbow(5), limits = c(min(df$LIE),max(df$LIE))) +
+            p <- ggplot(df, aes(x={pcs[i]}, y={pcs[j]}, z=Score)) +
+                stat_summary_2d(fun=mean, binwidth = {binsize}) +
+                scale_fill_gradientn(colours = rainbow(5), limits = c(min(df$Score),max(df$Score))) +
                 geom_hdr_lines() +
-                labs(fill = "LIE") +
+                labs(fill = "Score") +
                 theme(
             panel.border = element_rect(color = "black", fill = 'NA', linewidth = 1.5),
             panel.background = element_rect(fill = NA),
@@ -456,4 +515,36 @@ def cluster(sdf, ref, output):
             ggsave("{pcs[i]}-{pcs[j]}_{output}", width = 7, height = 7)
 
             ''')
+
+	
+def find_nearest_conf_to_average(input_file):
+    from rdkit.Geometry import Point3D
+    from rdkit.Chem import rdMolAlign
+    
+    # Load the conformations
+    u = mda.Universe(input_file[0], input_file)
+
+    # Calculate the average positions
+    avg_coordinates = np.mean([u.trajectory[i].positions for i in range(len(u.trajectory))], axis=0)
+
+    mol = input_file[0]
+    avg_conf = mol.GetConformer()
+    for i in range(mol.GetNumAtoms()):
+        x,y,z = avg_coordinates[i]
+        avg_conf.SetAtomPosition(i, Point3D(float(x), float(y), float(z)))
+    
+    mol.AddConformer(avg_conf, assignId=True)
+
+    # Initialize minimum distance and conf index
+    distance = float('inf')
+    frame = -1
+
+    # Iterate over each conf to find the closest to the average conf
+    for i, mol_i in enumerate(input_file):
+        rmsd = rdMolAlign.GetBestRMS(mol, mol_i)
+        if rmsd < distance:
+            distance = rmsd
+            frame = i
+
+    return frame
 
