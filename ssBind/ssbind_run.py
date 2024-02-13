@@ -10,8 +10,6 @@ import multiprocessing as mp
 
 #Substructure-based alternative BINDing modes generator for protein-ligand systems
 
-
-	
 	
 def ParserOptions():
     parser = argparse.ArgumentParser()
@@ -97,7 +95,7 @@ def main():
 
 		plants.SPORES(args.receptor, 'receptor.mol2', 'settypes')
 
-		pool.starmap(plants.plants_docking, [(i, input_file, refmol, args.receptor, 12, 'output_{}'.format(i), 10, xyz, fixedAtom+1, flex_res) for i in range(math.ceil(args.numconf/10))])	
+		pool.starmap(plants.plants_docking, [(i, input_file, refmol, args.receptor, 12, f'output_{i}', 10, xyz, fixedAtom+1, flex_res) for i in range(math.ceil(args.numconf/10))])	
 		mol2_files = glob.glob(os.path.join('docking_conformers', "*.mol2"))
 		print('\n{} conformers have been generated using PLANTS docking tool.'.format(len(mol2_files)))
 		pool.starmap(plants.filtering, [(MolFromInput(mol), args.numconf, args.rms) for mol in mol2_files])
@@ -105,8 +103,11 @@ def main():
 		clustering_poses('conformers.sdf', MolFromInput(args.ligand), 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
 	elif args.generator == 'rdock':
 		import rdock
+		from chem_tools import clustering_poses
 		
 		rdock_random = str(uuid.uuid4())
+		os.makedirs('.{}'.format(rdock_random))
+		
 		
 		molecule = args.reference
 		
@@ -114,10 +115,14 @@ def main():
 
 		if input_format not in {'sd','sdf'}:
 			obabel_convert(molecule, 'ref_{}.sdf'.format(rdock_random), QniqueNames=False)
+			molecule = 'ref_{}.sdf'.format(rdock_random)
 		
 		rdock.get_tethered(refmol, input_file, rdock_random)
-		rdock.prepare_receptor(RECEPTOR_FILE = 'receptor.mol2', REF_MOL = 'ref_{}.sdf'.format(rdock_random))
-		rdock.run_rdock('{}.sdf'.format(rdock_random), '.{}.sdf'.format(rdock_random))
+		rdock.prepare_receptor(RECEPTOR_FILE = 'receptor.mol2', REF_MOL = molecule)
+		pool.starmap(rdock.run_rdock, [(i, f'.{rdock_random}/{rdock_random}.sdf', f'{rdock_random}') for i in range(math.ceil(args.numconf/10))])
+		rdock.combine_files(f'.{rdock_random}')
+		shutil.rmtree(f'.{rdock_random}')
+		clustering_poses('conformers.sdf', MolFromInput(args.ligand), 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
 	else:
 		from chem_tools import gen_conf_rdkit
 		#Conformer generation using RDKit.
