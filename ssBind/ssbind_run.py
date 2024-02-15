@@ -7,6 +7,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdmolfiles import * 
 import multiprocessing as mp
+from spyrmsd import io, rmsd
 
 #Substructure-based alternative BINDing modes generator for protein-ligand systems
 
@@ -54,8 +55,8 @@ def main():
 	pool = mp.Pool(processes=nprocs)
 	terminate_signal = mp.Event()
 	
-	refmol = MolFromInput(args.reference)
-	input_file = MolFromInput(args.ligand)
+	refmol = MolFromInput(os.path.abspath(args.reference))
+	input_file = MolFromInput(os.path.abspath(args.ligand))
 	
 	
 	molDihedrals = get_uniqueDihedrals(refmol, input_file)
@@ -98,9 +99,9 @@ def main():
 		pool.starmap(plants.plants_docking, [(i, input_file, refmol, args.receptor, 12, f'output_{i}', 10, xyz, fixedAtom+1, flex_res) for i in range(math.ceil(args.numconf/10))])	
 		mol2_files = glob.glob(os.path.join('docking_conformers', "*.mol2"))
 		print('\n{} conformers have been generated using PLANTS docking tool.'.format(len(mol2_files)))
-		pool.starmap(plants.filtering, [(MolFromInput(mol), args.numconf, args.rms) for mol in mol2_files])
+		#pool.starmap(plants.filtering, [(MolFromInput(mol), args.numconf, args.rms) for mol in mol2_files])
 		plants.combine_files('docking_conformers')
-		clustering_poses('conformers.sdf', MolFromInput(args.ligand), 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
+		clustering_poses('conformers.sdf', input_file, 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
 	elif args.generator == 'rdock':
 		import rdock
 		from chem_tools import clustering_poses
@@ -109,7 +110,7 @@ def main():
 		os.makedirs('.{}'.format(rdock_random))
 		
 		
-		molecule = args.reference
+		molecule = os.path.abspath(args.reference)
 		
 		input_format = molecule.split('.')[-1].lower()
 
@@ -118,11 +119,11 @@ def main():
 			molecule = 'ref_{}.sdf'.format(rdock_random)
 		
 		rdock.get_tethered(refmol, input_file, rdock_random)
-		rdock.prepare_receptor(RECEPTOR_FILE = 'receptor.mol2', REF_MOL = molecule)
-		pool.starmap(rdock.run_rdock, [(i, f'.{rdock_random}/{rdock_random}.sdf', f'{rdock_random}') for i in range(math.ceil(args.numconf/10))])
+		rdock.prepare_receptor(RECEPTOR_FILE = os.path.abspath(args.receptor), REF_MOL = molecule)
+		pool.starmap(rdock.run_rdock, [(i, f'.{rdock_random}/{rdock_random}.sd', f'{rdock_random}') for i in range(math.ceil(args.numconf/10))])
 		rdock.combine_files(f'.{rdock_random}')
 		shutil.rmtree(f'.{rdock_random}')
-		clustering_poses('conformers.sdf', MolFromInput(args.ligand), 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
+		clustering_poses('conformers.sdf', input_file, 'Scores.csv', 'out.svg', binsize=args.bin, distThresh=args.distThresh, numbin=args.numbin)
 	else:
 		from chem_tools import gen_conf_rdkit
 		#Conformer generation using RDKit.
@@ -154,7 +155,8 @@ if __name__ == '__main__':
 		
 	pool = mp.Pool(processes=nprocs)
 
-	main()	
+	with pool:
+		main()	
         
 	
 	if args.minimize == 'gromacs':

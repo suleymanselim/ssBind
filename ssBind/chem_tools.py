@@ -2,13 +2,11 @@
 import os, math
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem.rdMolAlign import AlignMol, GetBestRMS
 from rdkit.Chem.rdmolops import Get3DDistanceMatrix
-from rdkit.Chem import rdFMCS
+from rdkit.Chem import rdFMCS, rdMolAlign
 from rdkit.Chem import rdMolTransforms
 from typing import Optional, List
 from rdkit.Chem.rdmolfiles import * 
-from joblib import Parallel, delayed
 from rdkit.Chem import AllChem
 from copy import deepcopy
 import MDAnalysis as mda
@@ -17,6 +15,13 @@ import numpy as np
 from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
 import logging
 rpy2_logger.setLevel(logging.ERROR)
+
+def is_file(fname):
+	if os.path.isfile(fname):
+		return True
+	else:
+		return False
+
 
 def which(program):
     def is_exe(fpath):
@@ -44,9 +49,11 @@ FILE_PARSERS = {
 
 def MolFromInput(mol_input): 
     #Reading any file format
-    if os.path.isfile(mol_input):
+    if is_file(mol_input) == True:
         content_reader = FILE_PARSERS
         mol_format = os.path.splitext(mol_input)[1][1:]
+    else:
+    	raise SystemExit(f'\nERROR! Input file ({mol_input}) is not found!!!')
     if mol_format:
         try:
             reader = content_reader[mol_format.lower()]
@@ -357,7 +364,7 @@ def clustering_poses(inputfile, ref, csv_scores, output, binsize, distThresh, nu
 
 
     else:
-        confs = Chem.SDMolSupplier(inputfile)
+        confs = Chem.SDMolSupplier(inputfile, sanitize=False)
         u = mda.Universe(confs[0], confs)     
 
     pc = pca.PCA(u, select='not (name H*)',
@@ -448,7 +455,6 @@ def clustering_poses(inputfile, ref, csv_scores, output, binsize, distThresh, nu
         cids.append(confs[int(entry['Index'])])
         index_dict.append({i: int(entry['Index'])})
 
-    from rdkit.Chem import rdMolAlign
     dists = []
     for i in range(len(cids)):
         for j in range(i):
@@ -519,7 +525,6 @@ def clustering_poses(inputfile, ref, csv_scores, output, binsize, distThresh, nu
 	
 def find_nearest_conf_to_average(input_file):
     from rdkit.Geometry import Point3D
-    from rdkit.Chem import rdMolAlign
     
     # Load the conformations
     u = mda.Universe(input_file[0], input_file)
