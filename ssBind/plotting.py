@@ -1,29 +1,21 @@
 #!/usr/bin/python
 import os, math
 import pandas as pd
-import argparse
 import itertools
 from rdkit import Chem
-from rdkit.Chem.rdMolAlign import AlignMol, GetBestRMS
-from rdkit.Chem.rdmolops import Get3DDistanceMatrix
 from rdkit.Chem.Draw import *
-from rdkit.Chem import rdFMCS
-from rdkit.Chem import rdMolTransforms
-from typing import Optional
 from rdkit.Chem.rdmolfiles import * 
-import multiprocessing as mp
-from joblib import Parallel, delayed
-from typing import List, Optional
-from rdkit.Chem import AllChem
-from copy import deepcopy
-from plotnine import *
 import patchworklib as pw
 from rdkit.Chem import rdMolAlign
-
+from rdkit.ML.Cluster import Butina
+import MDAnalysis as mda
+from MDAnalysis.analysis import pca, align
 import warnings
 from rpy2.rinterface import RRuntimeWarning
 warnings.filterwarnings("ignore", category=RRuntimeWarning)
-
+from rpy2 import robjects
+import rpy2.robjects.lib.ggplot2 as ggplot2
+    
 def ggplotheme():
 	return theme(
 	aspect_ratio = 2,
@@ -42,8 +34,6 @@ def ggplotheme():
     
 
 def plotPCA(inputfile, outputfile):
-	import MDAnalysis as mda
-	from MDAnalysis.analysis import pca, align
 		
 	input_format = inputfile.split('.')[-1].lower()
 
@@ -84,10 +74,6 @@ def plotPCA(inputfile, outputfile):
 
 
 def cluster(inputfile, outputfile):
-    import MDAnalysis as mda
-    from MDAnalysis.analysis import pca, align
-    from rpy2 import robjects
-    import rpy2.robjects.lib.ggplot2 as ggplot2
     
     input_format = inputfile.split('.')[-1].lower()
 
@@ -190,14 +176,12 @@ def cluster(inputfile, outputfile):
         cids.append(confs[int(entry['Index'])])
         index_dict.append({i: int(entry['Index'])})
 
-    from rdkit.Chem import rdMolAlign
     dists = []
     for i in range(len(cids)):
         for j in range(i):
             rms = rdMolAlign.GetBestRMS(cids[i],cids[j])
             dists.append(rms)
 
-    from rdkit.ML.Cluster import Butina
     clusts = Butina.ClusterData(dists, len(cids), 0.5, isDistData=True, reordering=True)
     
     #from sklearn.cluster import DBSCAN

@@ -1,7 +1,25 @@
-import os, shutil, sys, re, uuid, glob 
+import glob
+import os
+import re
+import shutil
+import sys
+import uuid
+import warnings
 from pathlib import Path
+
 import pandas as pd
+import MDAnalysis as mda
+from MDAnalysisTests.datafiles import AUX_EDR
 from rdkit import Chem
+from openff.interchange import Interchange
+from openff.toolkit.topology import Topology, Molecule
+from openff.toolkit.typing.engines.smirnoff import ForceField
+from acpype.topol import AbstractTopol, ACTopol, MolTopol, header
+
+
+
+warnings.simplefilter("ignore")
+
 
 
 def find_gmx():
@@ -18,29 +36,38 @@ GMX = find_gmx()
 
 MDPFILES = sys.path[0] + '/utils'
 
-def get_gaff(ligandfile, molname):
+def get_gaff(ligandfile, molname, ff):
 	"""Build a ligand topology and coordinate file from a ligand file using acpype for gaff"""
-	from rdkit import Chem
-	from chem_tools import MolFromInput
+
 	paras = {
 		'ligandfile': ligandfile,
 		'molname': molname,
+		'ff': ff,
 		'net_charge': Chem.GetFormalCharge(MolFromInput(ligandfile))}
 
-	RC = os.system('''acpype -i {ligandfile} -b {molname} -n {net_charge} -f -o gmx >acpype.{molname}.log 2>&1 '''.format(**paras))
+	RC = os.system('''acpype -i {ligandfile} -b {molname} -n {net_charge} -a {ff} -f -o gmx >acpype.{molname}.log 2>&1 '''.format(**paras))
 	if RC != 0:
 		raise SystemExit('\nERROR!\nFailed to run the acpype. see the %s for details.'%os.path.abspath("acpype.{0}.log\n".format(molname)))
 	shutil.copy("LIG.acpype/LIG_GMX.gro", f"{molname}.gro")
 
 def get_cgenff(molecule, molname):
 	"""Build a ligand topology and coordinate file from a ligand file using SILCSBIO for cgenff"""
-	from chem_tools import obabel_convert
+
 
 	input_format = molecule.split('.')[-1].lower()
 
 	if input_format != 'mol2':
-		obabel_convert(molecule, 'ligand.mol2', resname='LIG')
+		obabel_convert(molecule, 'ligand.mol2', QniqueNames=True)
 		molecule = 'ligand.mol2'
+	
+	with open(molecule, 'r') as file:
+		content = file.read()
+
+	pattern = r'@<TRIPOS>UNITY_ATOM_ATTR.*?(?=@<TRIPOS>|$)'
+	updated_content = re.sub(pattern, '', content, flags=re.DOTALL)
+
+	with open('ligand.mol2', 'w') as file:
+		file.write(updated_content) 
 
 	cmd = '''$SILCSBIODIR/cgenff/cgenff_to_gmx.sh mol={} > cgenff.log 2>&1;'''.format(molecule)
 	RC = os.system(cmd)
@@ -50,27 +77,23 @@ def get_cgenff(molecule, molname):
 		shutil.move("posre.itp", f"posre_{molname}.itp")
 		shutil.move(f"{Path(molecule).stem}_gmx.top", f"{molname}.top")
 
-		obabel_convert('{}_gmx.pdb'.format(Path(molecule).stem), 'LIG.gro', QniqueNames=False)
+		obabel_convert('{}_gmx.pdb'.format(Path(molecule).stem), 'LIG.gro')
 
 
 def get_openff(molecule, molname):	####https://github.com/openforcefield/openff-toolkit
 	"""Build a ligand topology and coordinate file from a ligand file using openff"""
-	from acpype.topol import AbstractTopol, ACTopol, MolTopol, header
-	from openff.toolkit.topology.molecule import Molecule
+
 
 	# Use the OpenFF Toolkit to generate a molecule object from a SMILES pattern
 	molecule = Molecule.from_file(molecule)
 
 	# Create an OpenFF Topology object from the molecule
-	from openff.toolkit.topology import Topology
 	topology = Topology.from_molecules(molecule)
 
 	# Load the latest OpenFF force field release: version 2.1.0, codename "Sage"
-	from openff.toolkit.typing.engines.smirnoff import ForceField
 	forcefield = ForceField('openff-2.1.0.offxml')
 
 	# Create an Interchange object
-	from openff.interchange import Interchange
 	out = Interchange.from_smirnoff(force_field=forcefield, topology=topology)
 
 	# write to GROMACS files
@@ -99,7 +122,7 @@ def get_atomtypes(itp_files, ff):
 				if p:
 					if line.strip() != '':
 						if ff == 'openff':
-							line_rn = line.replace("MOL0","LIG")
+							line_rn = line.replace("MOL0","")
 							atomtypes.append(line_rn)
 						else:
 							atomtypes.append(line)
@@ -137,11 +160,7 @@ def mol_itp(itp_file, resname, output_itp, ff):
 						line_list = line.split()
 						res_name = line_list[3]
 						line_rn = line.replace(res_name,resname)
-						if ff == 'openff':
-							atom_name = line_list[1]
-							output.write(line_rn.replace(atom_name,atom_name + "_{}".format(resname)))
-						else:
-							output.write(line.replace(res_name,resname))
+						output.write(line.replace(res_name,resname))
 
 
 def protein_itp(itp_file, molname, output_itp):
@@ -175,7 +194,7 @@ def get_topol(pro_itp, lig_itp,  ff='gaff', protein_FF='amber99sb-ildn'):
 	    print("\nWarning: Directory 'md_setup' already exists !\n")
 
 
-	if ff == 'gaff' or ff == 'openff':
+	if ff in {'gaff', 'gaff2', 'openff'}:
 		initial = """
 ; Include forcefield parameters
 #include "{}.ff/forcefield.itp"\n
@@ -187,7 +206,7 @@ def get_topol(pro_itp, lig_itp,  ff='gaff', protein_FF='amber99sb-ildn'):
 #include "./charmm36.ff/forcefield.itp"
 ;
 ; Include ligand specific parameters
-# include "./charmm36.ff/LIG_ffbonded.itp"
+# include "./charmm36.ff/lig_ffbonded.itp"
 	"""
 		water = './charmm36.ff/tip3p.itp'
 		shutil.move('charmm36.ff', "md_setup/charmm36.ff")
@@ -227,7 +246,7 @@ LIG 1
 	shutil.move('protein.gro', "md_setup/protein.gro")
 
 	try:
-	    if ff == 'gaff':
+	    if ff in {'gaff', 'gaff2'}:
 	    	shutil.copy('LIG.acpype/LIG_GMX.gro', "md_setup/LIG.gro")
 	    else:
 	    	shutil.copy('LIG.gro', "md_setup/LIG.gro")
@@ -289,7 +308,7 @@ def replace_GROcoor(gro_file1, gro_file2, output_path):
 		output_file.write(box)
 
 
-def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF='amber99sb-ildn', water='tip3p', ignh=False):
+def gmx_pdb2gmx(pdbfile, outcoord='protein.gro', outtop='topol.top', protein_FF='amber99sb-ildn', water='tip3p', ignh=True):
 	"""Build a protein topology and coordinate file from a PDB file"""
 	paras = {
 		'gmx':GMX,
@@ -312,19 +331,19 @@ def gmx_trjcat(idx, time, outtrj):
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 
-	cmd = 'echo Protein System|{0} trjconv -s md_setup/complex.gro -f {1}.xtc -o {1}.xtc -fit rot+trans > gromacs2.log 2>&1'.format(GMX, idx)
+	cmd = 'echo Protein System|{0} trjconv -s md_setup/complex.gro -f {1}.xtc -o {1}x.xtc -fit rot+trans > gromacs2.log 2>&1'.format(GMX, idx)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 		
-	cmd = 'echo {3}|{0} trjcat -f {1}.xtc -o {2}.xtc -settime 1 > gromacs.log 2>&1'.format(GMX, idx, outtrj, time)
+	cmd = 'echo {3}|{0} trjcat -f {1}x.xtc -o {2}.xtc -settime 1 > gromacs.log 2>&1'.format(GMX, idx, outtrj, time)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 		
 def gmx_mdrun(idx, md_setup):
 	"""gmx grompp (the gromacs preprocessor) reads a molecular topology file, checks the validity of the file, expands the topology from a molecular description to an atomic description."""
-	cmd = '{0} grompp -f {1} -o {2}.tpr -c {2}.gro -p {3}/topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX, MDPFILES + '/em.mdp', idx, md_setup)
+	cmd = '{0} grompp -f {1} -o {2}.tpr -c {2}x.gro -p {3}/topol.top -maxwarn 1 > gromacs.log 2>&1'.format(GMX, MDPFILES + '/em.mdp', idx, md_setup)
 	RC = os.system(cmd)
 	if RC != 0:
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
@@ -343,10 +362,7 @@ def gmx_grompp(md_setup):
 		raise SystemExit('\nERROR! see the log file for details %s'%os.path.abspath("gromacs.log\n"))
 		
 def mda_edr(edrfile, term):
-	import warnings
-	warnings.simplefilter("ignore")
-	import MDAnalysis as mda
-	from MDAnalysisTests.datafiles import AUX_EDR
+
 	aux = mda.auxiliary.EDR.EDRReader(edrfile)
 	
 	#Using only last 100 steps and converting to kcal/mol
@@ -360,9 +376,9 @@ def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
 		get_topol('protein.top', 'openff_LIG.itp', ff=FF, protein_FF=proteinFF)
 
 
-	if FF == 'gaff':
+	if FF in {'gaff', 'gaff2'}:
 		gmx_pdb2gmx(receptor, outcoord='protein.gro', outtop='protein.top', protein_FF=proteinFF, ignh=False)
-		get_gaff(ligand, 'LIG')
+		get_gaff(ligand, 'LIG', FF)
 		get_topol('protein.top', 'LIG.acpype/LIG_GMX.itp', ff=FF, protein_FF=proteinFF)
 
 
@@ -377,8 +393,7 @@ def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
 
 def minimize(i, mol, trjdir):
 	
-	from chem_tools import obabel_convert
-	
+
 	
 	md = str(uuid.uuid4())
 	writer = Chem.SDWriter(f"{md}.sdf")
@@ -390,7 +405,7 @@ def minimize(i, mol, trjdir):
 			
 	replace_GROcoor(f'{md}.gro', 'md_setup/LIG.gro', f'{md}.gro')
 			
-	combine_gro_files('md_setup/protein.gro', f'{md}.gro', f'{md}.gro')
+	combine_gro_files('md_setup/protein.gro', f'{md}.gro', f'{md}x.gro')
 
 	gmx_mdrun(md, 'md_setup') 
 	gmx_trjcat(md, i, f'.{trjdir}/{md}.xtc')

@@ -1,13 +1,27 @@
 #!/usr/bin/python
-import os, math, shutil, csv, uuid, glob
+
+# Standard library imports
+import os
+import math
+import shutil, csv, uuid, glob, re
+
+# RDKit imports
 from rdkit import Chem
+from rdkit.Chem import AllChem, rdMolAlign, rdmolops
 from rdkit.Chem.rdMolAlign import AlignMol, GetBestRMS
-from rdkit.Chem import AllChem
+from rdkit.ML.Cluster import Butina
+
+# MDAnalysis imports 
 import MDAnalysis as mda
 from MDAnalysis.analysis import distances
+
+# Custom utility imports
+from .chem_tools import MolFromInput, obabel_convert, MCS_AtomMap
 import chilife as xl
-from chem_tools import MolFromInput
+
+# Data handling 
 import pandas as pd
+
 
 def get_close_residues(receptor, ligand, cutoff=3.5): 
 
@@ -31,13 +45,13 @@ def get_close_residues(receptor, ligand, cutoff=3.5):
 
             residue = MolFromInput('test_{}_{}.pdb'.format(res.resname,res.resid))
 
-            from rdkit.Chem import rdMolAlign
+            
             dists = []
             for i in range(residue.GetNumConformers()):
                 for j in range(i):
                     dists.append(rdMolAlign.GetBestRMS(Chem.Mol(residue,confId=i),Chem.Mol(residue,confId=j)))
 
-            from rdkit.ML.Cluster import Butina
+            
             rmsd_cutoff = 0.5
             for _ in range(10):
                 clusts = Butina.ClusterData(dists, residue.GetNumConformers(), rmsd_cutoff, isDistData=True, reordering=True)
@@ -67,8 +81,11 @@ def molecule_center(mol):
     return center
 
 
-def get_flex_residues(receptor, ligand, cutoff=3.5): 
-
+def get_flex_residues(receptor, ligand, reference, cutoff=3.5): 
+    
+    
+    AlignMol(ligand, reference, atomMap=MCS_AtomMap(ligand, reference))
+    
     protein = mda.Universe(receptor)
     ligand = mda.Universe(ligand)
 
@@ -84,7 +101,7 @@ def get_flex_residues(receptor, ligand, cutoff=3.5):
     return res_list
 
 def getAtomConst(ligand, reflig):
-    from chem_tools import MCS_AtomMap
+    
     AlignMol(ligand, reflig, atomMap=MCS_AtomMap(ligand, reflig))
 
     pdwriter = Chem.PDBWriter('ligand.pdb', flavor=4)
@@ -137,11 +154,11 @@ def SPORES(inputfile, outputfile, mode):
         raise SystemExit('\nERROR!\nFailed to run the SPORES. See the {} for details.'.format(os.path.abspath("SPORES.log\n")))
         
 
-def plants_docking(i, ligand, reflig, receptor, radius=12, output_dir='output', cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None, ):
+def plants_docking(i, dock_dir, radius=15, cluster_structures=10, xyz=None, fixedAtom=None, flex_res=None):
 
     template=(f'''
 #Input Options
-protein_file 			receptor.mol2
+protein_file             receptor.mol2
 
 #Binding Site
 bindingsite_center {xyz}
@@ -154,19 +171,11 @@ cluster_structures {cluster_structures}
 scoring_function chemplp
 ligand_intra_score lj
 
-#Search Algorithm
-#flip_ring_corners 1
-#flip_amide_bonds 1
-#force_flipped_bonds_planarity 1
-
 #Output Options
-write_protein_splitted 1
 write_multi_mol2 0
-
 
 #Fixed Scaffold
 ligand_file ligand.mol2 fixed_scaffold_{fixedAtom}
-
 
 #Flexible Side-chains
 ''')
@@ -190,14 +199,24 @@ ligand_file ligand.mol2 fixed_scaffold_{fixedAtom}
 
         os.system(f'''PLANTS --mode screen plants_config > PLANTS.log 2>&1 ''')
 
-
-        os.makedirs(os.path.join('..', f'docking_conformers'), exist_ok=True)
         for filename in os.listdir('.'):
-            if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
-                shutil.move(filename, os.path.join(os.path.join('..', f'docking_conformers'), filename.replace('_entry_00001', f'_{i}')))
+            if flex_res == []:
+                if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
+                    shutil.move(filename, os.path.join(os.path.join('..', str(dock_dir)), filename.replace('_entry_00001', f'_{i}')))
+
+            else:
+                if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
+                    filenamepdb = filename.replace('_entry_00001', f'_{i}')
+                    obabel_convert(filename, 'ligand.pdb')
+                    obabel_convert(filename.replace('.mol2', '_protein.mol2'), 'protein.pdb')
+                    mol1 = Chem.MolFromPDBFile('ligand.pdb', removeHs=False, sanitize=False)
+                    mol2 = Chem.MolFromPDBFile('protein.pdb', removeHs=False, sanitize=False)
+                    mol = rdmolops.CombineMols(mol1, mol2)
+                    Chem.MolToPDBFile(mol, "complex.pdb", flavor=1)
+                    shutil.move("complex.pdb", os.path.join('..', dock_dir, filenamepdb.replace('.mol2', '.pdb')))
 
         try:
-            with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', 'docking_conformers', 'Scores.csv'), 'a') as csv_out:
+            with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', dock_dir, 'Scores.csv'), 'a') as csv_out:
                 reader = csv.reader(csv_in)
                 writer = csv.writer(csv_out)
 
@@ -241,40 +260,91 @@ def CheckRMS(moli, rms=0.1):
     except OSError:
         return True  
 
+def natural_sort_key(s):
+    """
+    Generate a key for sorting strings that contain numbers,
+    ensuring that numerical parts are sorted numerically.
+    """
+    return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+
+
 def combine_files(dockdir):
-	# Directory containing the Mol2 files
-	mol2_files = sorted([f for f in os.listdir(dockdir) if f.endswith('.mol2')])
 
-	# Create an SDF writer
-	sdf_writer = Chem.SDWriter('conformers.sdf')
+    # Directory containing the Mol2 files
+    files = sorted([f for f in os.listdir(dockdir) if f.endswith('.mol2')], key=natural_sort_key)
 
-	# Process each Mol2 file
-	for mol2_file in mol2_files:
-		mol2_path = os.path.join(dockdir, mol2_file)
-		mol = Chem.MolFromMol2File(mol2_path)
-		if mol is not None:
-		    sdf_writer.write(mol)
+    
+    csv_path = f'{dockdir}/Scores.csv'
+    df = pd.read_csv(csv_path, header=None)    
+    
+    flex = False
+    if len(files) == 0:
+        flex = True
+        files = sorted([f for f in os.listdir(dockdir) if f.endswith('.pdb')], key=natural_sort_key)
+        combined_lines = []
+        conect_lines = []
+        model_count = 0
+        for pdb_file in files:
+            with open(f'{dockdir}/{pdb_file}', 'r') as file:
+                lines = file.readlines()
+                atom_lines = [line for line in lines if line.startswith('ATOM')]
+                if pdb_file == files[0]: 
+                    conect_lines = [line for line in lines if line.startswith('CONECT')]
+                    shutil.copy(f'{dockdir}/{pdb_file}', 'ref_conf.pdb')
+                combined_lines.append(f"MODEL        {model_count}\n")
+                combined_lines.extend(atom_lines)
+                combined_lines.append("ENDMDL\n")  # Append ENDMDL after each file's ATOM lines
+                model_count += 1
+        combined_lines.extend(conect_lines)
+        combined_lines.append("END\n")
+        with open('combined_file.pdb', 'w') as combined_file:
+           combined_file.writelines(combined_lines)
+        df.iloc[:, 0] = df.iloc[:, 0].apply(lambda x: x + '.pdb')
+    else:
+        df.iloc[:, 0] = df.iloc[:, 0].apply(lambda x: x + '.mol2')
 
-	sdf_writer.close()
+        # Create an SDF writer
+    sdf_writer = Chem.SDWriter('conformers.sdf')
 
-	csv_path = f'{dockdir}/Scores.csv'
-	df = pd.read_csv(csv_path, header=None)
+        # Process each Mol2 file
+    for f in files:
+        path = os.path.join(dockdir, f)
+        if flex:
+            mol = Chem.MolFromPDBFile(path, sanitize=False)
+        else:
+            mol = Chem.MolFromMol2File(path, sanitize=False)
+        if mol is not None:
+            sdf_writer.write(mol)
+    sdf_writer.close()
 
-	df.iloc[:, 0] = df.iloc[:, 0].apply(lambda x: x + '.mol2')
 
-	# Create a dictionary for mapping filenames to their rows
-	filename_to_row = {filename: row for row, filename in enumerate(mol2_files)}
+    # Create a dictionary for mapping filenames to their rows
+    filename_to_row = {filename: row for row, filename in enumerate(files)}
 
-	# Sort the dataframe based on the order of the mol2 files
-	df['sort_index'] = df.iloc[:, 0].map(filename_to_row)
-	df.sort_values(by='sort_index', inplace=True)
+    # Sort the dataframe based on the order of the mol2 files
+    df['sort_index'] = df.iloc[:, 0].map(filename_to_row)
+    df.sort_values(by='sort_index', inplace=True)
 
-	df.drop(columns=['sort_index'], inplace=True)
-	df.reset_index(drop=True, inplace=True)
+    df.drop(columns=['sort_index'], inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
-	# Save the rearranged CSV with index column
-	df.columns = ['names', 'Score']
-	df['names'] = df['names'].str.replace('.mol2', '', regex=False)
+    # Save the rearranged CSV with index column
+    df.columns = ['names', 'Score']
+    df['names'] = df['names'].str.replace(r'\.\w+$', '', regex=True)
 
-	df.to_csv('Scores.csv', index=True, index_label='Index')
-	shutil.rmtree(dockdir)
+    df.to_csv('Scores.csv', index=True, index_label='Index')
+    shutil.rmtree(dockdir)
+
+def handle_flexibility(flexDist = None, flexList = None, receptor_file = 'receptor.pdb', query_molecule = 'ligand.mol2', reference_substructure = 'reference.mol2'):
+    # Handle flexibility for PLANTS
+    if flexDist is not None:
+        return [f"flexible_protein_side_chain_string {residue[0]}{residue[1]}" for residue in plants.get_flex_residues(
+                                                                                                          receptor_file, 
+                                                                                                          query_molecule, 
+                                                                                                          reference_substructure, 
+                                                                                                          flexDist)]
+    elif flexList is not None:
+        residuelist = [[item[:3], int(item[3:])] for item in flexList.split(',')] 
+        return [f"flexible_protein_side_chain_string {residue[0]}{residue[1]}" for residue in residuelist]
+    else:
+        return []    
