@@ -35,7 +35,7 @@ run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor recepto
 
 ## Python tutorial
 
-#### 1. Generating conformers using dihedral angles
+#### 1. Generating conformers using PLANTS
 
 ```python
 from ssBind import SSBIND
