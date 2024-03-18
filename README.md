@@ -13,7 +13,7 @@ ssBind offers different methods for generating multiple conformations by restrai
 * Overall minimization using gromacs with GAFF, CGenFF and OpenFF
 
 ## Installation (from source)
-You'll get the develop branch, which may be ahead of the latest release.
+
 ```bash
 $ git clone https://github.com/suleymanselim/ssBind
 $ cd ssBind
