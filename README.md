@@ -1,4 +1,4 @@
-# Substructure-based alternative BINDing modes generator for protein-ligand systems
+# Sub-Structure-based alternative BINDing modes generator for protein-ligand systems
 
 
 ssBind offers different methods for generating multiple conformations by restraining certain sub-structures. This feature enables researchers to systematically explore the effects of various substituents attached to a common scaffold on the binding and to refine the interaction patterns between ligand molecules and their protein targets.
