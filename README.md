@@ -3,6 +3,14 @@
 
 ssBind offers different methods for generating multiple conformations by restraining certain sub-structures. This feature enables researchers to systematically explore the effects of various substituents attached to a common scaffold on the binding and to refine the interaction patterns between ligand molecules and their protein targets.
 
+## Available methods for conformer generation
+
+* Random conformer generation with RDKit 
+* Dihedral angle sampling
+* PLANTS docking tool
+* rDock docking tool
+* Scoring and minimization with AutoDock Vina or smina
+* Overall minimization using gromacs with GAFF, CGenFF and OpenFF
 
 ## Installation (from source)
 You'll get the develop branch, which may be ahead of the latest release.
