@@ -31,7 +31,7 @@ run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor recepto
 run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator angle 
 ```
 #### 3. Generating conformers using PLANTS docking tool
-PLANTS allows to restrain the position of a ring system or a single non-ring atom in docking. In this case, all translational and rotational degrees of freedom of the fixed scaffold are completely neglected. The code automatically determines the ring system to be fixed in the reference scaffold.
+PLANTS allows the restraint of the position of a ring system or a single non-ring atom in docking. In this case, all the fixed scaffold's translational and rotational degrees of freedom are completely neglected. The code automatically determines the ring system to be fixed in the reference scaffold. If there is no ring system in the reference, only the specific atom is restrained.
 
 ```console
 run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator plants 
@@ -47,6 +47,7 @@ run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor recepto
 
 ```
 #### 4. Tethered scaffold docking with rDock
+In tethered scaffold docking, the ligand position is constrained, ensuring they align with the substructure coordinates of a reference ligand. This involves overlaying a ligand with a corresponding substructure onto the coordinates of the reference substructure. The ligand's degrees of freedom are anchored to their predefined reference position. rDock facilitates this by offering the flexibility to separately adjust the ligand's position, orientation, and dihedral angles.
 ```console
 run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator rdock 
 ```
