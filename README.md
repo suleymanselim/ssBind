@@ -22,8 +22,15 @@ $ pip install .
 
 ## Examples using the command line scripts
 
-#### 1. Generating conformers using PLANTS docking tool
-In this procedure, the ligand poses are restricted and overlayed the substructure coordinates of a reference ligand "reference.mol2". 
+#### 1. Random conformational sampling using RDKit
+```console
+run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator rdkit 
+```
+#### 2. Using dihedral angles to generate conformers
+```console
+run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator angle 
+```
+#### 3. Generating conformers using PLANTS docking tool
 PLANTS allows to restrain the position of a ring system or a single non-ring atom in docking. In this case, all translational and rotational degrees of freedom of the fixed scaffold are completely neglected. The code automatically determines the ring system to be fixed in the reference scaffold.
 
 ```console
@@ -39,8 +46,10 @@ run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor recepto
 run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator plants --flexList "MET49,MET165"
 
 ```
-
-
+#### 4. Tethered scaffold docking with rDock
+```console
+run_ssBind.py --reference reference.mol2 --ligand ligand.mol2 --receptor receptor.pdb --generator rdock 
+```
 ## Python tutorial
 
 #### 1. Generating conformers using PLANTS
