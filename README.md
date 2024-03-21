@@ -9,6 +9,7 @@ ssBind offers different methods for generating multiple conformations by restrai
 * Dihedral angle sampling
 * PLANTS docking tool
 * rDock docking tool
+#### Minimization and Scoring Options
 * Scoring and minimization with AutoDock Vina or smina
 * Overall minimization using gromacs with GAFF, CGenFF and OpenFF
 
