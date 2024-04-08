@@ -29,7 +29,8 @@ from MDAnalysis.analysis import pca, align, distances
 
 # Rpy2 imports for R integration
 try:
-    from rpy2 import robjects
+    from rpy2.robjects import r, pandas2ri
+    pandas2ri.activate()
     import rpy2.robjects.lib.ggplot2 as ggplot2
     from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
     rpy2_logger.setLevel(logging.ERROR)
@@ -47,6 +48,9 @@ except ImportError as e:
 from .gmx_tools import gmx_grompp
 import multiprocessing as mp
 from contextlib import closing
+
+from spyrmsd.molecule import Molecule
+from spyrmsd.rmsd import rmsdwrapper
 
 
 def is_file(fname):
@@ -475,19 +479,14 @@ def filtering(mol, receptor, cutoff=1.5, rms=0.2):
         sdwriter.close()
         outf.close()
 
-def calculate_best_rms(args):
-    i, j, cids = args
-    #mol1 = Molecule.from_rdkit(cids[i])
-    #mol2 = Molecule.from_rdkit(cids[j])
-    #return rmsdwrapper(mol1, mol2)
-    return rdMolAlign.GetBestRMS(cids[i],cids[j])
-
-def calculate_dists_in_parallel(cids, nprocs):
-    params = [(i, j, cids) for i in range(len(cids)) for j in range(i+1, len(cids))]
-    dists = []
-    with closing(mp.Pool(processes=nprocs)) as pool:
-        dists = pool.map(calculate_best_rms, params)
-    return dists
+# Function to calculate RMSD, designed to be compatible with multiprocessing.Pool
+def calculate_rms(params):
+    i, j, cid_i, cid_j = params
+    mol1 = Molecule.from_rdkit(cid_i)
+    mol2 = Molecule.from_rdkit(cid_j)
+    rms = rmsdwrapper(mol1, mol2)
+    #rms = GetBestRMS(cid_i, cid_j)
+    return i, j, rms
                     
 def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbin, nprocs):
     """
@@ -549,7 +548,7 @@ def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbi
 
             index_data = []
 
-            robjects.r(f'''
+            r(f'''
             library(ggplot2)
 
             df <- read.table('PCA_Scores.csv', header=TRUE, sep=",")
@@ -575,7 +574,7 @@ def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbi
                         index_data.append(rowb)
             os.remove(f'{pcs[i]}_{pcs[j]}.csv')
 
-            robjects.r(f'''
+            r(f'''
             library(ggplot2)
 
             mydata <- read.table('PCA_Scores.csv', header=TRUE, sep=",")
@@ -618,16 +617,21 @@ def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbi
     #with closing(mp.Pool(processes=nprocs)) as pool:
     #    dists = pool.map(calculate_best_rms, params)
 
-                
     dists = []    
-    for i in range(len(cids)):
-        for j in range(i):
+    tasks = [(i, j, cids[i], cids[j]) for i in range(len(cids)) for j in range(i)]
+    with closing(mp.Pool(processes=nprocs)) as pool:
+        results = pool.map(calculate_rms, tasks)
+    
+    dists = [rms[0] for _, _, rms in sorted(results, key=lambda x: (x[0], x[1]))]
+    
+    #for i in range(len(cids)):
+    #    for j in range(i):
             #mol1 = Molecule.from_rdkit(cids[i])
             #mol2 = Molecule.from_rdkit(cids[j])
             #rms = rmsdwrapper(mol1, mol2)
-            rms = rdMolAlign.GetBestRMS(cids[i],cids[j])
-            dists.append(rms)
-    
+    #        rms = rdMolAlign.GetBestRMS(cids[i],cids[j])
+    #        dists.append(rms)
+
     clusts = Butina.ClusterData(dists, len(cids), distThresh, isDistData=True, reordering=True)
         
     #from sklearn.cluster import DBSCAN
@@ -641,18 +645,21 @@ def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbi
     PC3 = []
     mode = 1
     for i in clusts:
-        sdwriter = Chem.SDWriter(f'model_{mode}.sdf')
         a = index_data[i[0]]
         PC1.append(a['PC1'])
         PC2.append(a['PC2'])
         PC3.append(a['PC3'])
         dict_i = index_dict[i[0]]
-        sdwriter.write(confs[int(next(iter(dict_i.values())))])
+        
         if flex == True:
            model = int(next(iter(dict_i.values())))
            get_model_compex(inputfile, model, receptor, f'model_{mode}.pdb')
+        else:
+            sdwriter = Chem.SDWriter(f'model_{mode}.sdf')
+            sdwriter.write(confs[int(next(iter(dict_i.values())))])
+            sdwriter.close()
         mode += 1
-    sdwriter.close()
+    
 
 
     pcx = [PC1, PC2, PC3]
@@ -660,7 +667,7 @@ def clustering_poses(inputfile, receptor, csv_scores, binsize, distThresh, numbi
     for i in range(len(pcs)):
         for j in range(i + 1, len(pcs)):
 
-            robjects.r(f'''
+            r(f'''
             library(ggplot2)
             library(ggdensity)
 
@@ -821,17 +828,15 @@ def optimize_molecule(input_file='conformers.sdf', output_file='ligand.sdf'):
     - output_file (str): The path to the output SDF file where the optimized molecule will be saved.
     """
     # Load molecule from SDF file
-    sdf = Chem.SDMolSupplier(input_file)
+    sdf = MolFromInput(input_file)
 
-    # Add hydrogens and coordinates
-    mol_with_h = Chem.AddHs(sdf[0], addCoords=True)
-
-    # Optimize molecule geometry
-    AllChem.MMFFOptimizeMolecule(mol_with_h, maxIters=1000)
+    writer = Chem.SDWriter(output_file)
+    mol = Chem.AddHs(sdf, addCoords=True)
+    AllChem.MMFFOptimizeMolecule(mol, maxIters=1000)
+    mol.SetProp('_Name', 'LIG')
+    writer.write(mol)
+    writer.close()      
 
     # Set molecule name
-    mol_with_h.SetProp('_Name', 'LIG')
+    
 
-    # Write optimized molecule to a new SDF file
-    with Chem.SDWriter(output_file) as writer:
-        writer.write(mol_with_h)

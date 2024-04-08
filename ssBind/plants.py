@@ -16,7 +16,7 @@ import MDAnalysis as mda
 from MDAnalysis.analysis import distances
 
 # Custom utility imports
-from .chem_tools import MolFromInput, obabel_convert, MCS_AtomMap
+from .chem_tools import MolFromInput, obabel_convert, MCS_AtomMap, parse_pdb_line
 import chilife as xl
 
 # Data handling 
@@ -205,6 +205,9 @@ ligand_file ligand.mol2 fixed_scaffold_{fixedAtom}
                     shutil.move(filename, os.path.join(os.path.join('..', str(dock_dir)), filename.replace('_entry_00001', f'_{i}')))
 
             else:
+                residues = [item.split()[-1] for item in flex_res]
+                residues.append('UNL1')
+                unwanted_atoms = []
                 if filename.startswith('ligand_entry_00001_conf_') and 'protein' not in filename:
                     filenamepdb = filename.replace('_entry_00001', f'_{i}')
                     obabel_convert(filename, 'ligand.pdb')
@@ -213,7 +216,27 @@ ligand_file ligand.mol2 fixed_scaffold_{fixedAtom}
                     mol2 = Chem.MolFromPDBFile('protein.pdb', removeHs=False, sanitize=False)
                     mol = rdmolops.CombineMols(mol1, mol2)
                     Chem.MolToPDBFile(mol, "complex.pdb", flavor=1)
-                    shutil.move("complex.pdb", os.path.join('..', dock_dir, filenamepdb.replace('.mol2', '.pdb')))
+                    with open("complex.pdb", 'r') as pdb_in:
+                        lines = pdb_in.readlines()
+                        atom_lines = [line for line in lines if line.startswith('ATOM')]
+                        conect_lines = [line for line in lines if line.startswith('CONECT')]
+                    atoms = []
+                    for line in atom_lines:
+                        parser = parse_pdb_line(line)
+                        residue = f"{parser['residue_name']}{parser['residue_sequence_number']}"
+                        if residue in residues:
+                            atoms.append(line)
+                        else:
+                            unwanted_atoms.append(parser['atom_serial_number'])
+                    conects = []
+                    for line in conect_lines:
+                        atoms_in_line = set(map(int, line[6:].split()))
+                        if set(unwanted_atoms).isdisjoint(atoms_in_line):
+                            conects.append(line)
+                    with open(os.path.join('..', dock_dir, filenamepdb.replace('.mol2', '.pdb')), 'w') as pdb_out:
+                        pdb_out.writelines(atoms)
+                        pdb_out.writelines(conects)
+           #shutil.move("complex.pdb", os.path.join('..', dock_dir, filenamepdb.replace('.mol2', '.pdb')))
 
         try:
             with open('ranking.csv', 'r') as csv_in, open(os.path.join('..', dock_dir, 'Scores.csv'), 'a') as csv_out:

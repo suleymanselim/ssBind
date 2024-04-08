@@ -71,10 +71,9 @@ def combine_sdf_files(output_sdf_path, input_sdf_folder, sorted_csv_path):
 
     for i in range(len(files)):
         full_path = os.path.join(input_sdf_folder, f'{i}_min.sdf')
-        suppl = Chem.SDMolSupplier(full_path)
+        suppl = Chem.SDMolSupplier(full_path, sanitize=False)
         for mol in suppl:
-            if mol is not None:
-                sdf_writer.write(mol)
+            sdf_writer.write(mol)
 
     sdf_writer.close()
 

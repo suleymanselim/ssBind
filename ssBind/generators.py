@@ -33,10 +33,10 @@ class SSBIND:
             molDihedrals = chem_tools.get_uniqueDihedrals(self._reference_substructure, self._query_molecule)
             inputs = itertools.product(chem_tools.degreeRange(degree), repeat=len(molDihedrals))
             if len(molDihedrals) > 3:
-                print(f"\nWarning! Too many torsions ({len(molDihedrals)})")
-            if len(molDihedrals) > 5:
-                print("Exiting due to too many torsions.")
-                return
+                print(f"\nWarning!!! Too many torsions ({len(molDihedrals)})")
+            #if len(molDihedrals) > 5:
+            #    print("Exiting due to too many torsions.")
+            #    return
             print(f'\nConformational sampling is running for {len(molDihedrals)} dihedrals.')        
             
             with closing(mp.Pool(processes=self._nprocs)) as pool:
@@ -102,21 +102,19 @@ class SSBIND:
 
         """
 
-        conformers_supplier = Chem.SDMolSupplier(conformers, sanitize=False)
-        conformers = [(i, mol) for i, mol in enumerate(conformers_supplier)]
-
         if minimizer == 'gromacs':
-            optimize_molecule(conformers)
-            gmx_tools.system_setup(self._receptor_file, 'ligand.sdf', proteinFF=args.proteinFF, FF=args.FF)
+            chem_tools.optimize_molecule(input_file = conformers)
+            gmx_tools.system_setup(self._receptor_file, 'ligand.sdf', proteinFF= proteinFF, FF= FF)
             trjdir = self._working_dir
             os.makedirs(trjdir)
             with closing(mp.Pool(processes=self._nprocs)) as pool:
-                pool.starmap(gmx_tools.minimize, [(i, mol, trjdir) for i, mol in conformers])
+                pool.starmap(gmx_tools.minimize, [(i, mol, trjdir) for i, mol in enumerate(Chem.SDMolSupplier(conformers, sanitize=False))])
+            gmx_tools.combine_traj(trjdir)
         elif minimizer == 'smina':
             conf_dir = self._working_dir
             os.makedirs(conf_dir)
             with closing(mp.Pool(processes=self._nprocs)) as pool:
-                pool.starmap(smina.smina_minimize_score, [(i, self._receptor_file, mol, conf_dir) for i, mol in conformers])
+                pool.starmap(smina.smina_minimize_score, [(i, self._receptor_file, mol, conf_dir) for i, mol in enumerate(Chem.SDMolSupplier(conformers, sanitize=False))])
             smina.combine_sdf_files('minimized_conformers.sdf', conf_dir, 'Scores.csv')
 
 
