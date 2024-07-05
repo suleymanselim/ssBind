@@ -22,14 +22,13 @@ setup(name='ssBind',
       license='MIT',
       keywords=["molecular modeling", "drug design",
             "docking", "protein-ligand"],
+      include_package_data=True,
       packages=find_packages(),
       scripts=['ssBind/run_ssBind.py'],
       install_requires=[
-          'openbabel',
           'numpy',
           'rdkit',
           'pandas',
           'MDAnalysis',
-          'rpy2'
       ],
       zip_safe=False)

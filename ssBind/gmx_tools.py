@@ -492,7 +492,10 @@ def system_setup(receptor, ligand, proteinFF='amber99sb-ildn', FF='gaff'):
         get_topol('protein.top', 'LIG.top', ff=FF)
 
 
+   
+
 def minimize(i, mol, trjdir):
+
     md = str(uuid.uuid4())
     
     sdf_path = f"{md}.sdf"
@@ -500,7 +503,6 @@ def minimize(i, mol, trjdir):
         mol_with_h = Chem.AddHs(mol, addCoords=True)
         writer.write(mol_with_h)
     
-
     gro_path = f"{md}.gro"
     chem_tools.obabel_convert(sdf_path, gro_path)
     

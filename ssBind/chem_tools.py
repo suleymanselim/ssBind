@@ -365,7 +365,7 @@ def gen_conf_angle(j, mol_Dihedrals, mol, reflig):
     sdwriter.close()
     outf.close()
 
-def gen_conf_rdkit(mol: Chem.rdchem.Mol, ref_mol: Chem.rdchem.Mol, j):
+def gen_conf_rdkit(mol: Chem.rdchem.Mol, ref_mol: Chem.rdchem.Mol, j, outfile = 'conformers.sdf'):
     """
     Generate a conformer using RDKit.
     
@@ -374,8 +374,8 @@ def gen_conf_rdkit(mol: Chem.rdchem.Mol, ref_mol: Chem.rdchem.Mol, j):
     - ref_mol: The reference molecule for generating the core (RDKit Mol object).
     - j: Random seed for constrained embedding.
     """
-    ref_smi = Chem.MolToSmiles(Chem.MolFromSmarts(rdFMCS.FindMCS([mol, ref_mol], completeRingsOnly=True, matchValences=True).smartsString))
-    core_with_wildcards = AllChem.ReplaceSidechains(ref_mol, Chem.MolFromSmiles(ref_smi))
+    ref_mcs = Chem.MolFromSmarts(rdFMCS.FindMCS([mol, ref_mol], completeRingsOnly=True, matchValences=True).smartsString)
+    core_with_wildcards = AllChem.ReplaceSidechains(ref_mol, ref_mcs)
     core1 = AllChem.DeleteSubstructs(core_with_wildcards, Chem.MolFromSmiles('*'))
     core1.UpdatePropertyCache()
 
@@ -383,7 +383,7 @@ def gen_conf_rdkit(mol: Chem.rdchem.Mol, ref_mol: Chem.rdchem.Mol, j):
     outmol = deepcopy(mol)
     mol_wh = Chem.AddHs(mol)
 
-    outf = open('conformers.sdf','a')
+    outf = open(outfile,'a')
     temp_mol = Chem.Mol(mol_wh)  
     AllChem.ConstrainedEmbed(temp_mol, core1, randomseed=j)
     temp_mol = Chem.RemoveHs(temp_mol)
@@ -408,7 +408,7 @@ def CheckRMS(sdfmol, ref, rms=0.2):
     - True if any conformation's RMSD to the reference is below the threshold, False otherwise.
     """
     try:
-        outf = Chem.SDMolSupplier(sdfmol, sanitize=False)
+        outf = Chem.SDMolSupplier(sdfmol, sanitize=True)
         for i, mol in enumerate(outf):
             if rdMolAlign.GetBestRMS(outf[i], ref) < rms:
                 return True
@@ -466,7 +466,6 @@ def filtering(mol, receptor, cutoff=1.5, rms=0.2):
     - None: The function returns nothing. It writes molecules passing all filters to 'filtered.sdf'.
     """
 
-    outf = open('filtered.sdf','a')
     if steric_clash(mol):
         return
     elif distance(receptor, mol, cutoff):
@@ -474,6 +473,7 @@ def filtering(mol, receptor, cutoff=1.5, rms=0.2):
     elif CheckRMS('filtered.sdf', mol, rms):
         return
     else:
+        outf = open('filtered.sdf','a')
         sdwriter = Chem.SDWriter(outf)
         sdwriter.write(mol)
         sdwriter.close()

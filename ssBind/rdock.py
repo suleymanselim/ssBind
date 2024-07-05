@@ -178,7 +178,7 @@ def combine_files(dockdir):
         sd_path = os.path.join(dockdir, f'{num}.sd')
         #obabel_convert(sd_path, os.path.join(dockdir, f'{num}.mol2')) 
         #mols = Chem.MolFromMol2File(os.path.join(dockdir, f'{num}.mol2'))
-        mols = Chem.SDMolSupplier(sd_path, sanitize=False)
+        mols = Chem.SDMolSupplier(sd_path, sanitize=True)
         if mols is not None:
             for i, mol in enumerate(mols):
                 sdf_writer.write(mol)

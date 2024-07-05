@@ -8,6 +8,7 @@ import multiprocessing as mp
 from rdkit import Chem
 from contextlib import closing
 from . import chem_tools, plants, rdock, smina, gmx_tools
+import numpy as np
 
 
 #Substructure-based alternative BINDing modes generator for protein-ligand systems
@@ -37,10 +38,16 @@ class SSBIND:
             #if len(molDihedrals) > 5:
             #    print("Exiting due to too many torsions.")
             #    return
+            numconf_angle = int((360/degree)**len(molDihedrals))
+            if numconf_angle > self._numconf:
+                subsample = np.random.choice(numconf_angle, size=self._numconf, replace=False, p=None)
+            else:
+                subsample = np.arange(self._numconf)
+            new_list = [item for index, item in enumerate(inputs) if index in subsample]
             print(f'\nConformational sampling is running for {len(molDihedrals)} dihedrals.')        
             
             with closing(mp.Pool(processes=self._nprocs)) as pool:
-                pool.starmap(chem_tools.gen_conf_angle, [(j, molDihedrals, self._query_molecule, self._reference_substructure) for j in inputs])
+                pool.starmap(chem_tools.gen_conf_angle, [(j, molDihedrals, self._query_molecule, self._reference_substructure) for j in new_list])
         elif generator == 'rdkit':
                 #Conformer generation using RDKit.
             with closing(mp.Pool(processes=self._nprocs)) as pool:
@@ -49,7 +56,7 @@ class SSBIND:
         ###Filter conformers having stearic clashes, clash with the protein, duplicates.
         print('\n{} conformers have been generated.'.format(len(Chem.SDMolSupplier('conformers.sdf', sanitize=False))))
         with closing(mp.Pool(processes=self._nprocs)) as pool:
-            pool.starmap(chem_tools.filtering, [(mol, self._receptor_file, cutoff_dist, rms) for i, mol in enumerate(Chem.SDMolSupplier('conformers.sdf', sanitize=False))])
+            pool.starmap(chem_tools.filtering, [(mol, self._receptor_file, cutoff_dist, rms) for i, mol in enumerate(Chem.SDMolSupplier('conformers.sdf', sanitize=True))])
 
         
     def generate_conformers_plants(self, flexDist = None, flexList = None):
@@ -108,13 +115,13 @@ class SSBIND:
             trjdir = self._working_dir
             os.makedirs(trjdir)
             with closing(mp.Pool(processes=self._nprocs)) as pool:
-                pool.starmap(gmx_tools.minimize, [(i, mol, trjdir) for i, mol in enumerate(Chem.SDMolSupplier(conformers, sanitize=False))])
+                pool.starmap(gmx_tools.minimize, [(i, mol, trjdir) for i, mol in enumerate(Chem.SDMolSupplier(conformers))])
             gmx_tools.combine_traj(trjdir)
         elif minimizer == 'smina':
             conf_dir = self._working_dir
             os.makedirs(conf_dir)
             with closing(mp.Pool(processes=self._nprocs)) as pool:
-                pool.starmap(smina.smina_minimize_score, [(i, self._receptor_file, mol, conf_dir) for i, mol in enumerate(Chem.SDMolSupplier(conformers, sanitize=False))])
+                pool.starmap(smina.smina_minimize_score, [(i, self._receptor_file, mol, conf_dir) for i, mol in enumerate(Chem.SDMolSupplier(conformers, sanitize=True))])
             smina.combine_sdf_files('minimized_conformers.sdf', conf_dir, 'Scores.csv')
 
 
