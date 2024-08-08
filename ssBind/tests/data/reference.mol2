@@ -1,0 +1,106 @@
+#	Created by:	Discovery Studio
+#	Creation time:	2023-12-10T22:23:03Z
+
+@<TRIPOS>MOLECULE
+Mpro-x3113_0A_bound
+   11    11     1 0 0
+PROTEIN
+USER_CHARGES
+
+
+@<TRIPOS>ATOM
+      1 C9            6.691000    0.264000   20.168000 C.ar     1 LIG1001    0.0027
+      2 C13           5.525000    1.016000   20.102000 C.ar     1 LIG1001    0.0094
+      3 C12           5.024000    1.413000   18.877000 C.ar     1 LIG1001    0.0204
+      4 C11           5.712000    1.038000   17.736000 C.ar     1 LIG1001    0.1107
+      5 N2            6.829000    0.304000   17.760000 N.ar     1 LIG1001   -0.2643
+      6 C10           7.285000   -0.078000   18.959000 C.ar     1 LIG1001    0.1169
+      7 H12           5.004173    1.293499   21.018424 H        1 LIG1001    0.0000
+      8 H13           4.111521    2.005554   18.810957 H        1 LIG1001    0.0000
+      9 H14           5.323357    1.357330   16.769002 H        1 LIG1001    0.0000
+     10 H15           8.180995   -0.697985   18.989196 H        1 LIG1001    0.0000
+     11 H5            7.119468   -0.043085   21.122051 H        1 LIG1001    0.0000
+@<TRIPOS>BOND
+     1    1    2 ar
+     2    1    6 ar
+     3    2    3 ar
+     4    3    4 ar
+     5    4    5 ar
+     6    5    6 ar
+     7    2    7 1
+     8    3    8 1
+     9    4    9 1
+    10    6   10 1
+    11    1   11 1
+@<TRIPOS>SUBSTRUCTURE
+1 LIG1001 1 RESIDUE 1 A LIG
+@<TRIPOS>SET
+GROUP:Hetatm STATIC ATOMS <user>
+6 1 2 3 4 5 6
+GROUP:Ligand_Groups:Ligand_1 STATIC SUBSTRUCTURES <user>
+1 1
+@<SCITEGIC>MOL_PROPERTY
+__PDBRemarks__
+SciTegic.value.StringValue
+REMARK 777 Header has been moved to Mpro-x3113_0A/Mpro-x3113_0A_header.pdb
+
+@<SCITEGIC>MOL_PROPERTY
+__PDBSeqres__
+SciTegic.value.StringValue
+
+
+@<SCITEGIC>ATOM_PROPERTY
+Formal Charge
+SciTegic.value.StringValue
+1 0
+2 0
+3 0
+4 0
+5 0
+6 0
+7 0
+8 0
+9 0
+10 0
+11 0
+
+@<SCITEGIC>ATOM_PROPERTY
+pdb_tempFactor
+SciTegic.value.DoubleValue
+1 36.57
+2 36.39
+3 35.93
+4 35.57
+5 35.32
+6 36.06
+7 36.42
+8 36.42
+9 36.42
+10 36.42
+11 36.15
+
+@<SCITEGIC>ATOM_PROPERTY
+pdb_occupancy
+SciTegic.value.DoubleValue
+1 0.80
+2 0.80
+3 0.80
+4 0.80
+5 0.80
+6 0.80
+7 0.80
+8 0.80
+9 0.80
+10 0.80
+11 0.80
+
+@<SCITEGIC>ATOM_PROPERTY
+pdb_heteroAtom
+SciTegic.value.BooleanValue
+1 true
+2 true
+3 true
+4 true
+5 true
+6 true
+

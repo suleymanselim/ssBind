@@ -6,7 +6,6 @@
 
 __version__ = "0.1.0"
 
-from .generators import SSBIND
+from .ssbind import SSBIND
 
-
-__all__ = ['SSBIND']
+__all__ = ["SSBIND"]
