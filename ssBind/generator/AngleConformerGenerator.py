@@ -61,17 +61,19 @@ class AngleConformerGenerator(AbstractConformerGenerator):
         """
         Generate a conformer using Dihedral angles.
         """
-        mol = self._query_molecule
+        mol = Chem.Mol(self._query_molecule)
         intD = 0
         for i in mol_Dihedrals:
             rdMolTransforms.SetDihedralRad(mol.GetConformer(), *i, value=j[intD])
             intD += 1
-        self._alignToRef(mol)
-        ligMin = self._minimize(mol)
+        molH = Chem.AddHs(mol)
+        self._alignToRef(molH)
+        molMinH = self._minimize(molH)
+        molMin = Chem.RemoveHs(molMinH)
 
         with open("conformers.sdf", "a") as outf:
             with Chem.SDWriter(outf) as sdwriter:
-                sdwriter.write(ligMin)
+                sdwriter.write(molMin)
 
     def _get_uniqueDihedrals(self):
         """
@@ -89,7 +91,7 @@ class AngleConformerGenerator(AbstractConformerGenerator):
 
         uniqueDihedrals = []
         for a in DM_mol:
-            if any((aa not in queryMatch) for aa in a[1:3]):
+            if any((aa not in queryMatch) for aa in a):
                 uniqueDihedrals.append((a))
             else:
                 continue

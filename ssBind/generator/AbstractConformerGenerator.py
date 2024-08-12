@@ -4,7 +4,6 @@ from typing import List, Tuple
 
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdFMCS
-from rdkit.Chem.AllChem import EmbedMolecule
 from rdkit.Chem.rdchem import Mol
 
 
@@ -57,18 +56,6 @@ class AbstractConformerGenerator:
                     return list(zip(*keepMatches))
 
         raise Exception("ERROR: No MCS found!")
-
-    def _embed(self, ligand: Mol, seed: int = -1) -> Mol:
-        coordMap = {}
-        ligConf = ligand.GetConformer(0)
-        for _, ligIdx in self._mappingRefToLig:
-            ligPtI = ligConf.GetAtomPosition(ligIdx)
-            coordMap[ligIdx] = ligPtI
-
-        l_embed = deepcopy(ligand)
-        EmbedMolecule(l_embed, coordMap=coordMap, randomSeed=seed)
-        self._alignToRef(l_embed)
-        return l_embed
 
     def _minimize(self, ligand: Mol) -> Mol:
         mcp = deepcopy(ligand)

@@ -10,7 +10,6 @@ from contextlib import closing
 
 import pandas as pd
 from rdkit import Chem, RDLogger
-from rdkit.Chem import AllChem, rdFMCS
 
 from ssBind.generator import AbstractConformerGenerator
 
@@ -257,11 +256,10 @@ END_SECTION
         # Process each sd file
         for num in numeric_list:
             sd_path = os.path.join(dockdir, f"{num}.sd")
-            # obabel_convert(sd_path, os.path.join(dockdir, f'{num}.mol2'))
-            # mols = Chem.MolFromMol2File(os.path.join(dockdir, f'{num}.mol2'))
-            mols = Chem.SDMolSupplier(sd_path, sanitize=True)
+            mols = Chem.SDMolSupplier(sd_path, sanitize=False)
             if mols is not None:
                 for i, mol in enumerate(mols):
+                    mol.UpdatePropertyCache(strict=False)
                     sdf_writer.write(mol)
             df = pd.read_csv(
                 os.path.join(dockdir, f"{num}.csv"), header=None, names=["Score"]
