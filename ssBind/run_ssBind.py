@@ -74,7 +74,7 @@ def ParserOptions():
         "--minimize",
         dest="minimize",
         help="Perform minimization",
-        choices=["gromacs", "smina"],
+        choices=["gromacs", "smina", "openmm"],
     )
     parser.add_argument(
         "--flexDist",

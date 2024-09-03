@@ -80,6 +80,8 @@ class SSBIND:
             self._minimizer = GromacsMinimizer(**self._kwargs)
         elif minimizer_type == "smina":
             self._minimizer = SminaMinimizer(**self._kwargs)
+        elif minimizer_type == "openmm":
+            self._minimizer = OpenMMinimizer(**self._kwargs)
         else:
             raise Exception(f"Invalid minimizer: {minimizer_type}")
 

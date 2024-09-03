@@ -12,3 +12,4 @@ pytest.ini
 pytest-hpc3
 dist/
 **/smina.static
+LOCAL/
