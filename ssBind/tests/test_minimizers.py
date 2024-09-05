@@ -1,6 +1,7 @@
 import shutil
 from typing import Union
 
+import pandas as pd
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
 
@@ -80,6 +81,10 @@ def minimize_and_test(minimizer: Union[GromacsMinimizer, SminaMinimizer], ligand
     mol = next(suppl)
     assert canonSmiles(mol) == canonSmiles(ligand)
 
+    scores = pd.read_csv("Scores.csv", header=None)
+    assert len(scores.columns) == 2
+    assert scores.iloc[0].dtype == float
+
 
 def test_smina_minimizer(receptor_file: str, ligand: Mol) -> None:
     """Test Smina minimizer
@@ -118,12 +123,6 @@ def test_openmm_minimizer(receptor_file: str, ligand: Mol) -> None:
     """
     cleanup_openmm()
     ligand_to_sdf(ligand)
-    # test Interchange system
-    minimizer = OpenMMinimizer(
-        receptor_file, ligand, proteinFF="sage_ff14sb", FF="nagl"
-    )
-    minimize_and_test(minimizer, ligand)
-    # test native OpenMM system
     minimizer = OpenMMinimizer(receptor_file, ligand)
     minimize_and_test(minimizer, ligand)
     cleanup_openmm()

@@ -1,10 +1,15 @@
 import os
 
 import MDAnalysis as mda
-from openff.interchange import Interchange
-from openff.toolkit import ForceField, Molecule, Topology
-from openff.toolkit.utils.nagl_wrapper import NAGLToolkitWrapper
-from openmm import LangevinMiddleIntegrator, Platform, app
+from openff.toolkit import Molecule, Topology
+from openmm import (
+    CustomNonbondedForce,
+    LangevinMiddleIntegrator,
+    NonbondedForce,
+    Platform,
+    System,
+    app,
+)
 from openmm.unit import *
 from openmmforcefields.generators import (
     GAFFTemplateGenerator,
@@ -46,11 +51,12 @@ class OpenMMinimizer:
         else:
             self._platform = None
 
+        self._constrain_protein = kwargs.get("constrain_protein", False)
+        self._calc_interaction_energy = kwargs.get("interaction_energy", True)
+
         self._integrator = LangevinMiddleIntegrator(
             300 * kelvin, 1 / picosecond, 0.004 * picoseconds
         )
-
-        os.environ["INTERCHANGE_EXPERIMENTAL"] = "1"
 
     def run_minimization(self, conformers: str = "conformers.sdf") -> None:
         """Run OpenMM minimization
@@ -70,7 +76,7 @@ class OpenMMinimizer:
 
         # read in topologies with coordinates
         top = Topology.from_pdb(self._receptor_file)
-        n_protein = top.n_atoms
+        self._n_protein = top.n_atoms
 
         conf = Molecule.from_file(conformers)
         if type(conf) == Molecule:
@@ -78,30 +84,21 @@ class OpenMMinimizer:
         ligand = Molecule.from_rdkit(self._ligand)
 
         # create simulation object based on FFs
-        if self._FF == "nagl":
-            if self._proteinFF != "sage_ff14sb":
-                raise Exception(
-                    "NAGL charges are only supported with sage_ff14sb force field"
-                )
-            openmm_simulation = self._simulation_from_interchange(top, ligand)
-        elif self._FF in ["gaff", "smirnoff"]:
-            openmm_simulation = self._simulation_openmm(top, ligand)
+        if self._FF in ["gaff", "smirnoff"]:
+            simulation = self._simulation_openmm(top, ligand)
         else:
             raise Exception(f"Unknown ligand FF: {self._FF}")
 
+        self._simulation = simulation
+
         # minimize energy against reference ligand to speed up subsequent minimizations
-        openmm_simulation.minimizeEnergy()
-        new_positions = openmm_simulation.context.getState(
-            getPositions=True
-        ).getPositions()
-        n_total = len(new_positions)
-        protein_pos = new_positions[0:n_protein]
+        simulation.minimizeEnergy()
+        new_positions = simulation.context.getState(getPositions=True).getPositions()
+        self._protein_pos = new_positions[0 : self._n_protein]
 
         # minimize conformers
         for i, conformer in enumerate(conf):
-            self._minimize_conformer(
-                i, conformer, openmm_simulation, protein_pos, n_protein, n_total
-            )
+            self._minimize_conformer(i, conformer)
 
         self._minimized_to_sdf()
 
@@ -117,6 +114,7 @@ class OpenMMinimizer:
             app.Simulation: OpenMM simulation
         """
         top.add_molecule(ligand)
+        self._n_total = top.n_atoms
         forcefield = self._get_protein_ff(self._proteinFF)
         if self._FF == "gaff":
             ff = GAFFTemplateGenerator(molecules=ligand)
@@ -127,46 +125,17 @@ class OpenMMinimizer:
         # create system and charge ligand (this takes a few minutes)
         system = forcefield.createSystem(top.to_openmm())
 
+        if self._constrain_protein:
+            for i in range(self._n_protein):
+                system.setParticleMass(i, 0 * amu)
+
+        # create force groups
+        self._set_force_parameter_offsets(system)
+
         # create openmm simulation
-        openmm_simulation = app.Simulation(top.to_openmm(), system, self._integrator)
-        openmm_simulation.context.setPositions(top.get_positions().magnitude)
-        return openmm_simulation
-
-    def _simulation_from_interchange(
-        self, top: Topology, ligand: Molecule
-    ) -> app.Simulation:
-        """Create OpenMM simulation from an Interchange
-
-        Args:
-            top (Topology): _description_
-            ligand (Molecule): _description_
-
-        Returns:
-            app.Simulation: _description_
-        """
-
-        sage_ff14sb = ForceField(
-            "openff-2.2.0.offxml", "ff14sb_off_impropers_0.0.4.offxml"
-        )
-        protein_intrcg = Interchange.from_smirnoff(
-            force_field=sage_ff14sb, topology=top
-        )
-
-        NAGLToolkitWrapper().assign_partial_charges(
-            ligand, "openff-gnn-am1bcc-0.1.0-rc.3.pt"
-        )
-
-        ligand_intrcg = sage_ff14sb.create_interchange(
-            ligand.to_topology(), charge_from_molecules=[ligand]
-        )
-
-        docked_intrcg = protein_intrcg.combine(ligand_intrcg)
-
-        openmm_simulation = docked_intrcg.to_openmm_simulation(
-            self._integrator, platform=self._platform
-        )
-
-        return openmm_simulation
+        simulation = app.Simulation(top.to_openmm(), system, self._integrator)
+        simulation.context.setPositions(top.get_positions().to_openmm())
+        return simulation
 
     @staticmethod
     def _get_protein_ff(force_fields_to_include: str) -> app.ForceField:
@@ -183,14 +152,53 @@ class OpenMMinimizer:
         ff = app.ForceField(*ff_list)
         return ff
 
-    @staticmethod
+    def _set_force_parameter_offsets(self, system: System) -> None:
+        """Define force groups in order to recover the interaction energy later.
+
+        Args:
+            system (System): OpenMM system
+
+        Raises:
+            Exception: CustomNonbondedForce can only act on atoms belonging to the same group
+        """
+        protein = set(range(self._n_protein))
+        ligand = set(range(self._n_protein, self._n_total))
+
+        for force in system.getForces():
+            if isinstance(force, NonbondedForce):
+                force.setForceGroup(0)
+                force.addGlobalParameter("protein_scale", 1)
+                force.addGlobalParameter("ligand_scale", 1)
+                for i in range(force.getNumParticles()):
+                    charge, sigma, epsilon = force.getParticleParameters(i)
+                    # Set the parameters to be 0 when the corresponding parameter is 0,
+                    # and to have their normal values when it is 1.
+                    param = "protein_scale" if i in protein else "ligand_scale"
+                    force.setParticleParameters(i, 0, 0, 0)
+                    force.addParticleParameterOffset(param, i, charge, sigma, epsilon)
+                for i in range(force.getNumExceptions()):
+                    p1, p2, chargeProd, sigma, epsilon = force.getExceptionParameters(i)
+                    if ((p1 in protein) and (p2 in ligand)) or (
+                        (p1 in ligand) and (p2 in protein)
+                    ):
+                        raise Exception(
+                            "Check your CustomNonbondedForce - covalent ligands not supported"
+                        )
+                    param = "protein_scale" if p1 in protein else "ligand_scale"
+                    force.setExceptionParameters(i, p1, p2, 0, 0, 0)
+                    force.addExceptionParameterOffset(
+                        param, i, chargeProd, sigma, epsilon
+                    )
+            elif isinstance(force, CustomNonbondedForce):
+                force.setForceGroup(1)
+                force.addInteractionGroup(protein, ligand)
+            else:
+                force.setForceGroup(2)
+
     def _minimize_conformer(
+        self,
         index: int,
         conformer: Molecule,
-        openmm_simulation: app.Simulation,
-        protein_pos: quantity.Quantity,
-        n_protein: int,
-        n_total: int,
     ) -> None:
         """Minimize single conformer and write it to PDB and its potential energy
         to csv.
@@ -198,33 +206,63 @@ class OpenMMinimizer:
         Args:
             index (int): Index of this conformer
             conformer (Molecule): Conformer to minimize
-            openmm_simulation (app.Simulation): OpenMM simulation
-            protein_pos (quantity.Quantity): Positions of proteins to reset
-            n_protein (int): Number of protein atoms
-            n_total (int): Number of protein+ligand atoms
         """
-        new_positions = openmm_simulation.context.getState(
-            getPositions=True
-        ).getPositions()
-        new_positions[0:n_protein] = protein_pos
-        new_positions[n_protein:n_total] = (
+        simulation = self._simulation
+        new_positions = simulation.context.getState(getPositions=True).getPositions()
+        new_positions[0 : self._n_protein] = self._protein_pos
+        new_positions[self._n_protein : self._n_total] = (
             conformer.to_topology().get_positions().to_openmm()
         )
-        openmm_simulation.context.setPositions(new_positions)
-        openmm_simulation.minimizeEnergy()
-        state = openmm_simulation.context.getState(getPositions=True, getEnergy=True)
+        simulation.context.setPositions(new_positions)
+        simulation.minimizeEnergy()
+        state = simulation.context.getState(getPositions=True, getEnergy=True)
         # write minimized complex
         with open(OpenMMinimizer.OUTPUT_PDB, "a+") as output:
             app.PDBFile.writeModel(
-                openmm_simulation.topology,
+                simulation.topology,
                 state.getPositions(),
                 output,
                 modelIndex=index,
             )
         # write energy
-        potEnergy = state.getPotentialEnergy()._value
+        if self._calc_interaction_energy:
+            potEnergy = self._interaction_energy()
+        else:
+            potEnergy = state.getPotentialEnergy().value_in_unit(kilojoule / mole)
+
         with open(OpenMMinimizer.SCORE_FILE, "a+") as scores_file:
             scores_file.write(f"{index},{potEnergy}\n")
+
+    def _interaction_energy(self) -> float:
+        """Calculate protein-ligand interaction energy
+
+        Returns:
+            float: interaction energy
+        """
+        protein_nb = self._nb_energy(1, 0)
+        ligand_nb = self._nb_energy(0, 1)
+        # IMPORTANT that this line is last, so final scales are (1,1) i.e.
+        # fully interacting system, so minimization doesn't get messed up.
+        total_nb = self._nb_energy(1, 1)
+        interaction_ene = total_nb - protein_nb - ligand_nb
+        return interaction_ene.value_in_unit(kilojoule / mole)
+
+    def _nb_energy(self, protein_scale: int, ligand_scale: int) -> Quantity:
+        """Calculated nonbonded energy between different interaction groups
+
+        Args:
+            protein_scale (int): turn on (1) or off (1) protein nonbonded
+            ligand_scale (int): turn on (1) or off (1) ligand nonbonded
+
+        Returns:
+            Quantity: Nonbonded p-p/l-l/total potential energy
+        """
+        simulation = self._simulation
+        simulation.context.setParameter("protein_scale", protein_scale)
+        simulation.context.setParameter("ligand_scale", ligand_scale)
+        return simulation.context.getState(
+            getEnergy=True, groups={0}
+        ).getPotentialEnergy()
 
     @staticmethod
     def _minimized_to_sdf() -> None:
