@@ -1,6 +1,6 @@
+import ast
 import os
 
-import MDAnalysis as mda
 from openff.toolkit import Molecule, Topology
 from openmm import (
     CustomNonbondedForce,
@@ -15,13 +15,13 @@ from openmmforcefields.generators import (
     GAFFTemplateGenerator,
     SMIRNOFFTemplateGenerator,
 )
-from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
 
 
 class OpenMMinimizer:
 
-    OUTPUT_PDB = "minimized_conformers.pdb"
+    OUTPUT_PDB = "complex.pdb"
+    OUTPUT_DCD = "minimized_conformers.dcd"
     SCORE_FILE = "Scores.csv"
 
     def __init__(
@@ -51,8 +51,10 @@ class OpenMMinimizer:
         else:
             self._platform = None
 
-        self._constrain_protein = kwargs.get("constrain_protein", False)
-        self._calc_interaction_energy = kwargs.get("interaction_energy", True)
+        self._constrain_protein = not kwargs.get("openmm_flex", True)
+        self._calc_interaction_energy = (
+            kwargs.get("openmm_score", "interaction") == "interaction"
+        )
 
         self._integrator = LangevinMiddleIntegrator(
             300 * kelvin, 1 / picosecond, 0.004 * picoseconds
@@ -95,12 +97,29 @@ class OpenMMinimizer:
         simulation.minimizeEnergy()
         new_positions = simulation.context.getState(getPositions=True).getPositions()
         self._protein_pos = new_positions[0 : self._n_protein]
+        state = simulation.context.getState(getPositions=True)
+
+        # write pdb for topology information
+        with open(OpenMMinimizer.OUTPUT_PDB, "w") as output:
+            app.PDBFile.writeFile(
+                simulation.topology,
+                state.getPositions(),
+                output,
+            )
+
+        # set up Scores.csv
+        with open(OpenMMinimizer.SCORE_FILE, "a+") as scores_file:
+            scores_file.write("Index,Score\n")
+
+        # set up DCD file for trajectory
+        dcdfile = open(OpenMMinimizer.OUTPUT_DCD, "wb")
+        self._dcd = app.DCDFile(dcdfile, simulation.topology, 1)
 
         # minimize conformers
         for i, conformer in enumerate(conf):
             self._minimize_conformer(i, conformer)
 
-        self._minimized_to_sdf()
+        dcdfile.close()
 
     def _simulation_openmm(self, top: Topology, ligand: Molecule) -> app.Simulation:
         """Construct OpenMM simulation combining topologies of PDB (top) and ligand
@@ -125,6 +144,15 @@ class OpenMMinimizer:
         # create system and charge ligand (this takes a few minutes)
         system = forcefield.createSystem(top.to_openmm())
 
+        # constrain reference substructure
+        if self._ligand.HasProp("fixed_atoms"):
+            fixed_atoms_string = self._ligand.GetProp("fixed_atoms")
+            fixed_atoms = ast.literal_eval(fixed_atoms_string)
+
+            for i in fixed_atoms:
+                system.setParticleMass(i + self._n_protein, 0 * amu)
+
+        # if not treated flexible, constrain protein too
         if self._constrain_protein:
             for i in range(self._n_protein):
                 system.setParticleMass(i, 0 * amu)
@@ -216,22 +244,20 @@ class OpenMMinimizer:
         simulation.context.setPositions(new_positions)
         simulation.minimizeEnergy()
         state = simulation.context.getState(getPositions=True, getEnergy=True)
-        # write minimized complex
-        with open(OpenMMinimizer.OUTPUT_PDB, "a+") as output:
-            app.PDBFile.writeModel(
-                simulation.topology,
-                state.getPositions(),
-                output,
-                modelIndex=index,
-            )
-        # write energy
+
         if self._calc_interaction_energy:
             potEnergy = self._interaction_energy()
         else:
             potEnergy = state.getPotentialEnergy().value_in_unit(kilojoule / mole)
 
-        with open(OpenMMinimizer.SCORE_FILE, "a+") as scores_file:
-            scores_file.write(f"{index},{potEnergy}\n")
+        # DON'T write conformers and energies if they failed to minimize
+        if potEnergy < 0:
+            # write minimized complex
+            self._dcd.writeModel(state.getPositions())
+
+            # write energy
+            with open(OpenMMinimizer.SCORE_FILE, "a+") as scores_file:
+                scores_file.write(f"{index},{potEnergy}\n")
 
     def _interaction_energy(self) -> float:
         """Calculate protein-ligand interaction energy
@@ -263,15 +289,3 @@ class OpenMMinimizer:
         return simulation.context.getState(
             getEnergy=True, groups={0}
         ).getPotentialEnergy()
-
-    @staticmethod
-    def _minimized_to_sdf() -> None:
-        """Extract ligand atoms from PDB to a SDF - this might go away in the future"""
-        u = mda.Universe(OpenMMinimizer.OUTPUT_PDB)
-        elements = mda.topology.guessers.guess_types(u.atoms.names)
-        u.add_TopologyAttr("elements", elements)
-        atoms = u.select_atoms("resname UNK")
-
-        sdwriter = Chem.SDWriter("minimized_conformers.sdf")
-        for _ in u.trajectory:
-            sdwriter.write(atoms.convert_to("RDKIT"))

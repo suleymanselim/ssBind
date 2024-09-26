@@ -11,10 +11,10 @@ from contextlib import closing
 import pandas as pd
 from rdkit import Chem, RDLogger
 
-from ssBind.generator import AbstractConformerGenerator
+from ssBind.generator import ConformerGenerator
 
 
-class RdockConformerGenerator(AbstractConformerGenerator):
+class RdockConformerGenerator(ConformerGenerator):
 
     def __init__(
         self,
@@ -23,9 +23,8 @@ class RdockConformerGenerator(AbstractConformerGenerator):
         receptor_file: str,
         **kwargs,
     ) -> None:
-        super().__init__(
-            query_molecule, reference_substructure, receptor_file, **kwargs
-        )
+        super().__init__(query_molecule, reference_substructure, **kwargs)
+        self._receptor_file = receptor_file
         curdir = kwargs.get("curdir", os.getcwd())
         self._working_dir = kwargs.get(
             "working_dir", os.path.join(curdir, str(uuid.uuid4()))

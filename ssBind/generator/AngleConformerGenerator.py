@@ -8,22 +8,19 @@ from rdkit import Chem
 from rdkit.Chem import rdMolTransforms
 from rdkit.Chem.rdchem import Mol
 
-from ssBind.generator import AbstractConformerGenerator
+from ssBind.generator.ConformerGenerator import ConformerGenerator
 
 
-class AngleConformerGenerator(AbstractConformerGenerator):
+class AngleConformerGenerator(ConformerGenerator):
 
     def __init__(
         self,
         query_molecule: str,
         reference_substructure: str,
-        receptor_file: str,
         degree=60,
         **kwargs,
     ) -> None:
-        super().__init__(
-            query_molecule, reference_substructure, receptor_file, **kwargs
-        )
+        super().__init__(query_molecule, reference_substructure, **kwargs)
 
         self._degree = degree
 

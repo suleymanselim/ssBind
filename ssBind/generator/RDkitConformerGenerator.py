@@ -7,21 +7,15 @@ from rdkit import Chem
 from rdkit.Chem.AllChem import EmbedMolecule
 from rdkit.Chem.rdchem import Mol
 
-from ssBind.generator import AbstractConformerGenerator
+from ssBind.generator import ConformerGenerator
 
 
-class RDkitConformerGenerator(AbstractConformerGenerator):
+class RDkitConformerGenerator(ConformerGenerator):
 
     def __init__(
-        self,
-        query_molecule: str,
-        reference_substructure: str,
-        receptor_file: str,
-        **kwargs: Dict
+        self, query_molecule: str, reference_substructure: str, **kwargs: Dict
     ) -> None:
-        super().__init__(
-            query_molecule, reference_substructure, receptor_file, **kwargs
-        )
+        super().__init__(query_molecule, reference_substructure, **kwargs)
 
     def generate_conformers(self) -> None:
         """Generate conformers using random embeddings via RDKit."""

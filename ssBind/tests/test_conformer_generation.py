@@ -51,9 +51,7 @@ def cleanup_plants() -> None:
             pass
 
 
-def generate_and_test(
-    generator: AbstractConformerGenerator, expected_num_confs: int
-) -> None:
+def generate_and_test(generator: ConformerGenerator, expected_num_confs: int) -> None:
     """Generate conformers, check that 2D topology (SMILES) is preserved as well
     as the desired number of conformers being generated.
 
@@ -82,7 +80,6 @@ def test_rdkit_generator(receptor_file: str, reference: Mol, ligand: Mol) -> Non
     generator = RDkitConformerGenerator(
         ligand,
         reference,
-        receptor_file,
         nprocs=2,
         numconf=2,
     )
@@ -101,7 +98,7 @@ def test_angle_generator(receptor_file: str, reference: Mol, ligand: Mol) -> Non
 
     cleanup()
     generator = AngleConformerGenerator(
-        ligand, reference, receptor_file, nprocs=1, numconf=1, degree=120
+        ligand, reference, nprocs=1, numconf=1, degree=120
     )
     generate_and_test(generator, 1)
     cleanup()

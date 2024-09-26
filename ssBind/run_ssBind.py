@@ -77,6 +77,20 @@ def ParserOptions():
         choices=["gromacs", "smina", "openmm"],
     )
     parser.add_argument(
+        "--openmm-score",
+        dest="openmm_score",
+        help="Calculate total or interaction energy upon minimization with OpenMM",
+        choices=["interaction", "total"],
+        default="interaction",
+    )
+    parser.add_argument(
+        "--openmm-flex",
+        dest="openmm_flex",
+        help="Treat protein as flexible upon OpenMM minimization",
+        type=bool,
+        default=True,
+    )
+    parser.add_argument(
         "--flexDist",
         dest="flexDist",
         type=int,
@@ -136,17 +150,26 @@ def main(args, nprocs):
     ssbind = SSBIND(**kwargs)
 
     ssbind.generate_conformers()
-    ssbind.filter_conformers()
+
+    flex_minimize = (
+        (args.minimize is not None)
+        and (args.minimize == "openmm")
+        and (args.openmm_flex)
+    )
+
+    if args.generator in ["rdkit", "angle"] and not flex_minimize:
+        ssbind.filter_conformers()
+        conformers = "filtered.sdf"
+    else:
+        conformers = "conformers.sdf"
 
     if args.minimize is not None:
-        conformers = (
-            "filtered.sdf" if args.generator in ["rdkit", "angle"] else "conformers.sdf"
-        )
         ssbind.run_minimization(conformers=conformers)
 
     conformers_map = {
         "smina": "minimized_conformers.sdf",
         "gromacs": "minimized_conformers.sdf",
+        "openmm": "minimized_conformers.dcd",
     }
     conformers = conformers_map.get(args.minimize, "conformers.sdf")
     ssbind.clustering(

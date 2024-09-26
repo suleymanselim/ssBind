@@ -8,20 +8,16 @@ import uuid
 from contextlib import closing
 from typing import Dict, List, Tuple
 
-import chilife as xl
 import MDAnalysis as mda
 import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import rdMolAlign, rdmolops
-from rdkit.Chem.rdchem import Mol
-from rdkit.Chem.rdMolAlign import AlignMol
-from rdkit.ML.Cluster import Butina
+from rdkit.Chem import rdmolops
 
-from ssBind.generator import AbstractConformerGenerator
+from ssBind.generator import ConformerGenerator
 from ssBind.io import MolFromInput, obabel_convert, parse_pdb_line
 
 
-class PlantsConformerGenerator(AbstractConformerGenerator):
+class PlantsConformerGenerator(ConformerGenerator):
 
     def __init__(
         self,
@@ -32,10 +28,9 @@ class PlantsConformerGenerator(AbstractConformerGenerator):
         flexList: str = None,
         **kwargs: Dict,
     ) -> None:
-        super().__init__(
-            query_molecule, reference_substructure, receptor_file, **kwargs
-        )
+        super().__init__(query_molecule, reference_substructure, **kwargs)
 
+        self._receptor_file = receptor_file
         self._flexDist = flexDist
         self._flexList = flexList
         self._working_dir = kwargs.get("working_dir", os.path.join(os.getcwd(), "tmp"))

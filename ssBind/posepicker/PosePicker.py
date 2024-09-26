@@ -13,11 +13,10 @@ import multiprocessing as mp
 from contextlib import closing
 
 import rpy2.robjects.lib.ggplot2 as ggplot2
+from rdkit import Chem
 from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
 from spyrmsd.molecule import Molecule
 from spyrmsd.rmsd import rmsdwrapper
-
-from ssBind.io import get_model_compex
 
 rpy2_logger.setLevel(logging.ERROR)
 
@@ -25,10 +24,12 @@ rpy2_logger.setLevel(logging.ERROR)
 class PosePicker:
     def __init__(self, receptor_file: str, **kwargs) -> None:
         self._receptor_file = receptor_file
+        self._ligand = kwargs.get("query_molecule")
         self._binsize = kwargs.get("bin", 0.25)
         self._distThresh = kwargs.get("distThresh", 0.5)
         self._numbin = kwargs.get("numbin", 10)
         self._nprocs = kwargs.get("nprocs", 1)
+        self._complex_topology = kwargs.get("complex_topology", "complex.pdb")
 
     def pick_poses(
         self, conformers: str = "conformers.sdf", csv_scores: str = "Scores.csv"
@@ -40,27 +41,37 @@ class PosePicker:
 
         input_format = conformers.split(".")[-1].lower()
 
-        flex = False
-        if input_format == "pdb":
-            confs = Chem.SDMolSupplier("conformers.sdf")
-            u = mda.Universe(confs[0], confs)
+        if input_format == "dcd":
+            if self._ligand is None:
+                raise Exception(
+                    "Error: Need tp supply query_molecule for clustering a PDB!"
+                )
+
+            u = mda.Universe(self._complex_topology, conformers)
+            # elements = mda.topology.guessers.guess_types(u.atoms.names)
+            # u.add_TopologyAttr("elements", elements)
+            atoms = u.select_atoms("resname UNK")
+            confs = [atoms.convert_to("RDKIT") for _ in u.trajectory]
+
+            select = "(resname UNK) and not (name H*)"
             flex = True
+
         else:
             confs = Chem.SDMolSupplier(conformers, sanitize=False)
             u = mda.Universe(confs[0], confs)
+            select = "not (name H*)"
+            flex = False
 
-        pc = pca.PCA(
-            u, select="not (name H*)", align=False, mean=None, n_components=None
-        ).run()
+        pc = pca.PCA(u, select=select, align=False, mean=None, n_components=None).run()
 
-        atoms = u.select_atoms("not (name H*)")
+        atoms = u.select_atoms(select)
 
         transformed = pc.transform(atoms, n_components=3)
         transformed.shape
 
         df = pd.DataFrame(transformed, columns=["PC{}".format(i + 1) for i in range(3)])
 
-        df["Index"] = df.index * u.trajectory.dt
+        df["Index"] = df.index
 
         scoredata = pd.read_csv(csv_scores, delimiter=",", header=0)
         PCA_Scores = pd.merge(df, scoredata, on="Index")
@@ -166,9 +177,11 @@ class PosePicker:
 
             if flex == True:
                 model = int(next(iter(dict_i.values())))
-                get_model_compex(
-                    conformers, model, self._receptor_file, f"model_{mode}.pdb"
-                )
+                u.trajectory[model]
+                u.atoms.write(f"model_{mode}.pdb")
+                # get_model_compex(
+                #   conformers, model, self._receptor_file, f"model_{model}.pdb"
+                # )
             else:
                 sdwriter = Chem.SDWriter(f"model_{mode}.sdf")
                 sdwriter.write(confs[int(next(iter(dict_i.values())))])

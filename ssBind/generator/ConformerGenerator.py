@@ -7,18 +7,13 @@ from rdkit.Chem import AllChem, rdFMCS
 from rdkit.Chem.rdchem import Mol
 
 
-class AbstractConformerGenerator:
+class ConformerGenerator:
 
     def __init__(
-        self,
-        query_molecule: str,
-        reference_substructure: str,
-        receptor_file: str,
-        **kwargs
+        self, query_molecule: str, reference_substructure: str, **kwargs
     ) -> None:
         self._query_molecule = query_molecule
         self._reference_substructure = reference_substructure
-        self._receptor_file = receptor_file
         self._nprocs = kwargs.get("nprocs", 1)
         self._numconf = kwargs.get("numconf", 1)
         distTol = kwargs.get("distTol", 1.0)
@@ -27,6 +22,9 @@ class AbstractConformerGenerator:
             query_molecule, reference_substructure, distTol
         )
         self._mappingLigToRef = [(j, i) for i, j in self._mappingRefToLig]
+
+        fixed_atoms = list(zip(*self._mappingLigToRef))[0]
+        self._query_molecule.SetProp("fixed_atoms", str(fixed_atoms))
 
     @abstractmethod
     def generate_conformers(self) -> None:
