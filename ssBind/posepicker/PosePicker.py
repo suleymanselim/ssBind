@@ -94,39 +94,37 @@ class PosePicker:
                 df[f"{pcs[j]}_ymin"] = df[f"{pcs[j]}"].apply(xmin)
                 df[f"{pcs[j]}_ymax"] = df[f"{pcs[j]}"].apply(xmax)
     
-                # group by pairs of PCs
-                groups = df.groupby([f"{pcs[i]}_xmin", f"{pcs[j]}_ymin", f"{pcs[i]}_xmax", f"{pcs[j]}_ymax"])
-    
-                # get counts of points in each group, and mean of Score
-                scores = groups.Score.mean().reset_index()
-                counts = groups.count().reset_index()
-    
-                raw_data = PCA_Scores
-                scores_sorted = scores.sort_values(by=["Score"])
-                top_bins = scores_sorted.head(self._numbin)
-                extracted_data = top_bins[[f"{pcs[i]}_xmin", f"{pcs[j]}_ymin", f"{pcs[i]}_xmax", f"{pcs[j]}_ymax"]]
-                for a, rowa in extracted_data.iterrows():
-                    for b, rowb in raw_data.iterrows():
-                        if (
-                            rowa[f"{pcs[i]}_xmin"] < rowb[pcs[i]] < rowa[f"{pcs[i]}_xmax"]
-                            and rowa[f"{pcs[j]}_ymin"] < rowb[pcs[j]] < rowa[f"{pcs[j]}_ymax"]
-                        ):
-                            index_data.append(rowb)
-    
-                counts_sorted = counts.sort_values(by=["Score"])
-                top_bins = counts_sorted.tail(self._numbin)
-                extracted_data = top_bins[[f"{pcs[i]}_xmin", f"{pcs[j]}_ymin", f"{pcs[i]}_xmax", f"{pcs[j]}_ymax"]]
-    
-                for a, rowa in extracted_data.iterrows():
-                    for b, rowb in raw_data.iterrows():
-                        if (
-                            rowa[f"{pcs[i]}_xmin"] < rowb[pcs[i]] < rowa[f"{pcs[i]}_xmax"]
-                            and rowa[f"{pcs[j]}_ymin"] < rowb[pcs[j]] < rowa[f"{pcs[j]}_ymax"]
-                        ):
-                            if any(row["Index"] == rowb["Index"] for row in index_data):
-                                index_data.append(rowb)
-                if pcs[i] == "PC1" and pcs[j] == "PC2":
-                    label_data = index_data
+        # group by pairs of PCs
+        groups = df.groupby(["PC1_xmin","PC2_ymin", "PC1_xmax", "PC2_ymax"])
+
+        # get counts of points in each group, and mean of Score
+        scores = groups.Score.mean().reset_index()
+        counts = groups.count().reset_index()
+
+        raw_data = PCA_Scores
+        scores_sorted = scores.sort_values(by=["Score"])
+        top_bins = scores_sorted.head(self._numbin)
+        extracted_data = top_bins[["PC1_xmin","PC2_ymin", "PC1_xmax", "PC2_ymax"]]
+        for a, rowa in extracted_data.iterrows():
+            for b, rowb in raw_data.iterrows():
+                if (
+                    rowa["PC1_xmin"] < rowb["PC1"] < rowa["PC1_xmax"]
+                    and rowa["PC2_ymin"] < rowb["PC2"] < rowa["PC2_ymax"]
+                ):
+                    label_data.append(rowb)
+
+        counts_sorted = counts.sort_values(by=["Score"])
+        top_bins = counts_sorted.tail(self._numbin)
+        extracted_data = top_bins[["PC1_xmin", "PC2_ymin", "PC1_xmax", "PC2_ymax"]]
+
+        for a, rowa in extracted_data.iterrows():
+            for b, rowb in raw_data.iterrows():
+                if (
+                    rowa["PC1_xmin"] < rowb["PC1"] < rowa["PC1_xmax"]
+                    and rowa["PC2_ymin"] < rowb["PC2"] < rowa["PC2_ymax"]
+                ):
+                    if any(row["Index"] == rowb["Index"] for row in label_data):
+                        label_data.append(rowb)
 
         cids = []
         index_dict = []
@@ -189,12 +187,12 @@ class PosePicker:
                 ax.set_xlabel(f"{pcs[i]}")
                 ax.set_ylabel(f"{pcs[j]}")
                 ax.set(xlim=(df[f"{pcs[i]}"].min(), df[f"{pcs[i]}"].max()), ylim=(df[f"{pcs[j]}"].min(), df[f"{pcs[j]}"].max()))
-                colorbar = fig.colorbar(scatter, cmap="gist_rainbow", label="Score", shrink=0.5)
+                colorbar = fig.colorbar(scatter, cmap="gist_rainbow", label="Score")
                 for index, dict_i in enumerate(labels):
                     coord_index = list(dict_i.values())[0]
-                    x_coord = df[f"{pcs[i]}"].iloc[coord_index]
-                    y_coord = df[f"{pcs[j]}"].iloc[coord_index]
-                    ax.text(x_coord, y_coord, f"{index+1}")
+                x_coord = df.loc[df.Index == coord_index, f"{pcs[i]}"]
+                y_coord = df.loc[df.Index == coord_index, f"{pcs[j]}"]
+                ax.text(x_coord, y_coord, f"{index+1}")
                 fig.savefig(f"{pcs[i]}-{pcs[j]}.svg", format="svg")
 
     @staticmethod
